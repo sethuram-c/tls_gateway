@@ -1,0 +1,19 @@
+# Local build output
+/build/
+/build-*/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local certificates and secrets (added in later phases)
+certs/
+*.key
+*.pem
+
+# Python test caches (later phases)
+__pycache__/
+.pytest_cache/
+*.pyc
