@@ -1,7 +1,7 @@
 # Development progress
 
-- [x] Phase 1 - Fedora development environment and CMake smoke build
-- [ ] Phase 2 - Project structure and executable logging basics
-- [ ] Phase 3 - Socket API exploration
+- [x] Phase 1 - Fedora toolchain setup (historical CMake-based initial commit)
+- [x] Phase 2 - Switch to GNU Make, modular diagnostics and Python smoke tests
+- [ ] Phase 3 - Linux Socket API fundamentals
 
-Next: implement the next incremental change while keeping the build green.
+Next: explore `socket`, `bind`, `listen`, and `accept` before adding a network listener.

@@ -1,3 +1,9 @@
-# Tests
+# Testing strategy
 
-Phase 1 uses a manual build/run smoke check. Python integration tests will be introduced when the gateway accepts TCP connections.
+Phase 2 uses the Python standard library for command-line smoke tests:
+
+```bash
+make test
+```
+
+The test runs normal startup, `--help`, `--version`, and invalid-argument handling, checking output streams and exit codes. In future phases Python `pytest` will test actual TCP/TLS functionality.

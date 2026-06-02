@@ -1,42 +1,39 @@
 # TLS Gateway
 
-A minimal, educational TLS-terminating reverse proxy in C for Linux (Fedora).
+Educational TLS-terminating reverse proxy in **C17** for Fedora Linux.
 
-## Status
+## Current status
 
-Phase 1/44: Fedora toolchain and reproducible CMake smoke build.
-The program is **not yet a network server**. Networking begins in later phases.
+**Phase 2/44:** modular GNU Make build, diagnostic logging, CLI flags and Python smoke tests. Networking starts in the following phases.
 
-## Prerequisites (Fedora)
+## Fedora prerequisites
 
 ```bash
-sudo dnf install -y gcc cmake make git openssl openssl-devel pkgconf-pkg-config gdb python3 curl
+sudo dnf install -y gcc make git openssl openssl-devel pkgconf-pkg-config gdb python3 curl
 ```
 
-## Build and run
+## Build and verify
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
+make
 ./build/tls-gateway
+./build/tls-gateway --help
+./build/tls-gateway --version
+make test
+make clean
 ```
 
-Expected output:
+GNU Make reads `Makefile`. Its `all` target compiles C17 objects and links the executable. `test` runs dependency-free Python smoke tests. `clean` removes generated files.
 
-```text
-tls-gateway: development environment ready
-```
+The default run prints an INFO diagnostic to **stderr**. `--help` and `--version` print to **stdout**. Unsupported arguments return exit status `2` and print an ERROR diagnostic to **stderr**.
 
-## Phase 1 verification
+## Repository layout
 
-```bash
-gcc --version
-cmake --version
-openssl version
-pkg-config --modversion openssl
-python3 --version
-git --version
-./build/tls-gateway
-```
+- `Makefile`: compile, link, test and clean
+- `src/main.c`: command-line entry point
+- `src/log.c`: diagnostic output
+- `include/log.h`: diagnostic interface
+- `tests/smoke_test.py`: Python CLI smoke tests
+- `progress.md`: phase tracker
 
-The phase-specific learning PDF is distributed separately, **not tracked in this repo**.
+Phase learning PDFs are **outside this repository**. Never commit build outputs, local certificates or private keys.
