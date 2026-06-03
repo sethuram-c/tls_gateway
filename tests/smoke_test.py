@@ -19,7 +19,13 @@ def main():
     assert version.returncode == 0 and "0.1.0" in version.stdout
     bad = run("--unexpected")
     assert bad.returncode == 2 and "[ERROR]" in bad.stderr
-    print("PASS: default, help, version, invalid argument")
+    demo = run("--socket-demo")
+    assert demo.returncode == 0, demo.stderr
+    assert "127.0.0.1:" in demo.stdout
+    assert "socket -> bind -> listen -> close" in demo.stdout
+    port_text = demo.stdout.split("127.0.0.1:", 1)[1].splitlines()[0]
+    assert 1 <= int(port_text) <= 65535
+    print("PASS: default, help, version, invalid argument, socket demo")
 
 
 if __name__ == "__main__":

@@ -2,9 +2,9 @@
 
 Educational TLS-terminating reverse proxy in **C17** for Fedora Linux.
 
-## Current status
+## Status
 
-**Phase 2/44:** modular GNU Make build, diagnostic logging, CLI flags and Python smoke tests. Networking starts in the following phases.
+**Phase 3/44:** socket lifecycle demonstration (`socket`, `bind`, `listen`, `getsockname`, `close`) on loopback. **Not yet a running server or TLS proxy.**
 
 ## Fedora prerequisites
 
@@ -16,24 +16,22 @@ sudo dnf install -y gcc make git openssl openssl-devel pkgconf-pkg-config gdb py
 
 ```bash
 make
-./build/tls-gateway
-./build/tls-gateway --help
-./build/tls-gateway --version
 make test
+./build/tls-gateway --socket-demo
+./build/tls-gateway --help
 make clean
 ```
 
-GNU Make reads `Makefile`. Its `all` target compiles C17 objects and links the executable. `test` runs dependency-free Python smoke tests. `clean` removes generated files.
-
-The default run prints an INFO diagnostic to **stderr**. `--help` and `--version` print to **stdout**. Unsupported arguments return exit status `2` and print an ERROR diagnostic to **stderr**.
+`--socket-demo` binds to `127.0.0.1` on an ephemeral port chosen by the kernel, calls `listen()`, prints the assigned port, and immediately closes the socket. It does not accept connections. The normal CLI remains intact.
 
 ## Repository layout
 
-- `Makefile`: compile, link, test and clean
+- `Makefile`: GCC compilation and tests
 - `src/main.c`: command-line entry point
-- `src/log.c`: diagnostic output
-- `include/log.h`: diagnostic interface
-- `tests/smoke_test.py`: Python CLI smoke tests
+- `src/socket_demo.c`: IPv4 listening socket lifecycle demo
+- `include/socket_demo.h`: demo interface
+- `src/log.c`, `include/log.h`: diagnostic logging
+- `tests/smoke_test.py`: Python smoke and socket demo tests
 - `progress.md`: phase tracker
 
-Phase learning PDFs are **outside this repository**. Never commit build outputs, local certificates or private keys.
+Phase learning PDFs are kept **outside this repository**. Do not commit build outputs or private keys.

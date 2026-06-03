@@ -1,11 +1,12 @@
 #include "log.h"
+#include "socket_demo.h"
 
 #include <stdio.h>
 #include <string.h>
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo]\n");
 }
 
 int main(int argc, char *argv[])
@@ -18,6 +19,10 @@ int main(int argc, char *argv[])
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
         puts("tls-gateway 0.1.0");
         return 0;
+    }
+
+    if (argc == 2 && strcmp(argv[1], "--socket-demo") == 0) {
+        return run_socket_demo();
     }
 
     if (argc != 1) {

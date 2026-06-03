@@ -3,7 +3,7 @@ CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -g
 CPPFLAGS := -Iinclude
 
 TARGET := build/tls-gateway
-OBJECTS := build/main.o build/log.o
+OBJECTS := build/main.o build/log.o build/socket_demo.o
 
 .PHONY: all test clean
 all: $(TARGET)
@@ -11,11 +11,15 @@ all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@
 
-build/main.o: src/main.c include/log.h
+build/main.o: src/main.c include/log.h include/socket_demo.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 build/log.o: src/log.c include/log.h
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+build/socket_demo.o: src/socket_demo.c include/socket_demo.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
