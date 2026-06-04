@@ -1,8 +1,9 @@
-# Development progress
+# TLS Gateway progress
 
-- [x] Phase 1 - Fedora toolchain setup (historical CMake-based initial commit)
-- [x] Phase 2 - GNU Make, modular diagnostics, Python smoke tests
-- [x] Phase 3 - IPv4 loopback socket lifecycle demonstration
-- [ ] Phase 4 - Persistent TCP server and accept loop
+- [x] Phase 1 — Fedora development setup (2026-12-01)
+- [x] Phase 2 — Project structure, Make and diagnostics (2026-12-02)
+- [x] Phase 3 — IPv4 socket lifecycle demo (2026-12-03)
+- [x] Phase 4 — Persistent blocking TCP server (2026-12-04)
+- [ ] Phase 5 — Python HTTP test backend
 
-Learning PDFs stay outside the repository.
+The phase PDFs are personal learning material and are not part of this repository.
