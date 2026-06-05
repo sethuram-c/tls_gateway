@@ -23,5 +23,6 @@ build/tcp_server.o: src/tcp_server.c include/tcp_server.h
 test: $(TARGET)
 	python3 tests/smoke_test.py
 	python3 tests/test_tcp_server.py
+	python3 tests/test_http_backend.py
 clean:
 	rm -rf build

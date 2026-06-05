@@ -1,3 +1,5 @@
-# Tests
+# Tests and local fixtures
 
-Run `make test`. `smoke_test.py` validates the CLI and Phase 3 socket demo; `test_tcp_server.py` validates Phase 4 with live TCP connections and graceful SIGTERM shutdown. Python standard library only.
+`make test` runs `smoke_test.py`, `test_tcp_server.py` and `test_http_backend.py`.
+All three use Python's standard library. `http_backend.py` is a separate loopback-only test fixture, not part of the C gateway binary.
+Run it manually using `python3 tests/http_backend.py` (default port 18081).
