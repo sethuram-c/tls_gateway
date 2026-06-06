@@ -1,31 +1,28 @@
 # TLS Gateway (learning project)
 
-C17 + GNU Make on Fedora. The gateway is built incrementally and tested using Python's standard library.
+C17 + GNU Make on Fedora. Python standard library is used for testing.
 
-## Build and run tests
+## Build and test
 
 ```bash
-make
-make test
+make clean && make && make test
 ```
 
-## Phase 5: local HTTP backend
+## Phase 6: connect C program to Python HTTP backend
 
-Start the **Python** backend in one terminal:
+Terminal A:
 
 ```bash
 python3 tests/http_backend.py
 ```
 
-Exercise it in another terminal:
+Terminal B:
 
 ```bash
-curl -i http://127.0.0.1:18081/
+./build/tls-gateway --backend-connect 18081
 curl -i http://127.0.0.1:18081/health
-curl -i http://127.0.0.1:18081/unknown
 ```
 
-Stop with Ctrl+C. For a custom test port, pass `--port 18082`.
-The C TCP server from Phase 4 is still available as `./build/tls-gateway --tcp-server`.
-**There is no connection between the C server and the Python HTTP backend yet.** That begins in Phase 6.
-Everything binds to 127.0.0.1; do not expose the practice backend to external networks.
+The C command makes one outbound TCP connection to `127.0.0.1:18081` and immediately closes it; it **does not send HTTP or forward client traffic**. Phase 7 will implement forwarding. To observe sockets, use `ss -ltnp | grep 18081` while Python is running. Everything binds to loopback.
+
+Legacy commands `--socket-demo` and `--tcp-server` remain available.

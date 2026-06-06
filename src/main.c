@@ -1,12 +1,25 @@
+#include "backend_connect.h"
 #include "log.h"
 #include "socket_demo.h"
 #include "tcp_server.h"
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT]\n");
+}
+
+static int parse_port(const char *text, unsigned short *out)
+{
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(text, &end, 10);
+    if (errno != 0 || text[0] == '\0' || *end != '\0' || value == 0 || value > 65535) return -1;
+    *out = (unsigned short)value;
+    return 0;
 }
 
 int main(int argc, char *argv[])
@@ -21,11 +34,19 @@ int main(int argc, char *argv[])
     }
     if (argc == 2 && strcmp(argv[1], "--socket-demo") == 0) return run_socket_demo();
     if (argc == 2 && strcmp(argv[1], "--tcp-server") == 0) return run_tcp_server();
+    if (argc == 3 && strcmp(argv[1], "--backend-connect") == 0) {
+        unsigned short port;
+        if (parse_port(argv[2], &port) < 0) {
+            fputs("invalid backend port (expected 1..65535)\n", stderr);
+            return 2;
+        }
+        return run_backend_connect(port);
+    }
     if (argc != 1) {
         log_message(LOG_ERROR, "unsupported arguments");
         print_usage(stderr);
         return 2;
     }
-    log_message(LOG_INFO, "startup checks completed (networking not enabled)");
+    log_message(LOG_INFO, "startup checks completed (proxy forwarding not enabled)");
     return 0;
 }

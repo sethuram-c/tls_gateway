@@ -1,5 +1,5 @@
 # Tests and local fixtures
 
-`make test` runs `smoke_test.py`, `test_tcp_server.py` and `test_http_backend.py`.
-All three use Python's standard library. `http_backend.py` is a separate loopback-only test fixture, not part of the C gateway binary.
-Run it manually using `python3 tests/http_backend.py` (default port 18081).
+`make test` runs four Python standard-library tests: `smoke_test.py`, `test_tcp_server.py`, `test_http_backend.py`, `test_backend_connect.py`.
+
+The backend connector test uses an OS-assigned loopback port, asserts successful TCP connection followed by EOF, checks rejected port arguments, and verifies connection-refused handling. The Python HTTP server (`http_backend.py`) is a local test fixture, not part of the C executable.
