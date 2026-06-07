@@ -1,3 +1,4 @@
+#include "tcp_proxy.h"
 #include "backend_connect.h"
 #include "log.h"
 #include "socket_demo.h"
@@ -9,7 +10,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -41,6 +42,15 @@ int main(int argc, char *argv[])
             return 2;
         }
         return run_backend_connect(port);
+    }
+    if (argc == 4 && strcmp(argv[1], "--tcp-proxy") == 0) {
+        unsigned short listen_port, backend_port;
+        if (parse_port(argv[2], &listen_port) < 0 ||
+            parse_port(argv[3], &backend_port) < 0 || listen_port == backend_port) {
+            fputs("invalid proxy ports (1..65535, must differ)\n", stderr);
+            return 2;
+        }
+        return run_tcp_proxy(listen_port, backend_port);
     }
     if (argc != 1) {
         log_message(LOG_ERROR, "unsupported arguments");

@@ -6,6 +6,7 @@
 - [x] Phase 4 - Persistent blocking TCP server (2026-12-04)
 - [x] Phase 5 - Python HTTP test backend (2026-12-05)
 - [x] Phase 6 - Outbound TCP connection to HTTP backend (2026-12-06)
-- [ ] Phase 7 - Bidirectional TCP forwarding
+- [x] Phase 7 - Bidirectional TCP forwarding (2026-12-07)
+- [ ] Phase 8 - TLS 1.3 handshake concepts
 
 Phase PDFs are personal learning resources, never committed to the repository.

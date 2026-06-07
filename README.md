@@ -26,3 +26,13 @@ curl -i http://127.0.0.1:18081/health
 The C command makes one outbound TCP connection to `127.0.0.1:18081` and immediately closes it; it **does not send HTTP or forward client traffic**. Phase 7 will implement forwarding. To observe sockets, use `ss -ltnp | grep 18081` while Python is running. Everything binds to loopback.
 
 Legacy commands `--socket-demo` and `--tcp-server` remain available.
+
+## Phase 7: blocking TCP proxy
+
+In one terminal run `python3 tests/http_backend.py`. In another run
+`./build/tls-gateway --tcp-proxy 18080 18081`. Test with
+`curl -i -H 'Connection: close' http://127.0.0.1:18080/health`.
+
+The proxy is loopback-only, handles one client at a time, and forwards raw
+TCP bytes in both directions. No TLS, epoll, or concurrent clients yet.
+Use `make test` for automated verification.
