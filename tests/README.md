@@ -6,3 +6,7 @@ The backend connector test uses an OS-assigned loopback port, asserts successful
 
 Phase 7: `test_tcp_proxy.py` launches its own backend and proxy on dynamically
 selected loopback ports, checks HTTP status and body, then shuts down both.
+
+Phase 8: `python3 tests/test_tls_handshake.py` uses an ephemeral, loopback-only
+`openssl s_server` and Python's `ssl` module to verify TLS 1.3, trust-chain
+behavior, and hostname matching. No test certificates are committed.

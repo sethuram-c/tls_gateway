@@ -36,3 +36,10 @@ In one terminal run `python3 tests/http_backend.py`. In another run
 The proxy is loopback-only, handles one client at a time, and forwards raw
 TCP bytes in both directions. No TLS, epoll, or concurrent clients yet.
 Use `make test` for automated verification.
+
+## Phase 8: TLS 1.3 handshake lab
+
+Run `python3 tests/test_tls_handshake.py` (or `make test`) to start a temporary
+OpenSSL TLS 1.3 server and exercise certificate trust, hostname verification,
+and negotiated protocol/cipher from a Python client. Temporary keys are deleted.
+**The C TCP proxy remains plaintext in Phase 8.** TLS termination comes later.

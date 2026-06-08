@@ -32,5 +32,6 @@ test: $(TARGET)
 	python3 tests/test_http_backend.py
 	python3 tests/test_backend_connect.py
 	python3 tests/test_tcp_proxy.py
+	python3 tests/test_tls_handshake.py
 clean:
 	rm -rf build
