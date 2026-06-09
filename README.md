@@ -43,3 +43,21 @@ Run `python3 tests/test_tls_handshake.py` (or `make test`) to start a temporary
 OpenSSL TLS 1.3 server and exercise certificate trust, hostname verification,
 and negotiated protocol/cipher from a Python client. Temporary keys are deleted.
 **The C TCP proxy remains plaintext in Phase 8.** TLS termination comes later.
+
+## Phase 9: local CA and TLS server certificate (development only)
+
+Generate a disposable CA and signed server certificate with DNS and IP SANs:
+
+```bash
+make certs
+openssl verify -CAfile certs/ca.crt -purpose sslserver \
+  -verify_hostname localhost certs/server.crt
+openssl verify -CAfile certs/ca.crt -purpose sslserver \
+  -verify_ip 127.0.0.1 certs/server.crt
+```
+
+Generated files are in `certs/`, **ignored by Git**. The script refuses to
+overwrite an existing directory. `ca.key` is the private CA signing key;
+`server.key` is the server's private key. Never publish either key or install
+this development CA into the system trust store. The C proxy remains plaintext.
+Run `python3 tests/test_certificates.py` for disposable certificate tests.

@@ -4,7 +4,7 @@ CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
 OBJECTS := build/main.o build/log.o build/socket_demo.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o
 
-.PHONY: all test clean
+.PHONY: all test clean certs
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@
@@ -33,5 +33,8 @@ test: $(TARGET)
 	python3 tests/test_backend_connect.py
 	python3 tests/test_tcp_proxy.py
 	python3 tests/test_tls_handshake.py
+	python3 tests/test_certificates.py
+certs:
+	bash scripts/generate_dev_certs.sh
 clean:
 	rm -rf build
