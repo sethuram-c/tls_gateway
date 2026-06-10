@@ -3,6 +3,7 @@
 #include "log.h"
 #include "socket_demo.h"
 #include "tcp_server.h"
+#include "tls_context.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,7 +11,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -42,6 +43,9 @@ int main(int argc, char *argv[])
             return 2;
         }
         return run_backend_connect(port);
+    }
+    if (argc == 4 && strcmp(argv[1], "--tls-check") == 0) {
+        return run_tls_check(argv[2], argv[3]);
     }
     if (argc == 4 && strcmp(argv[1], "--tcp-proxy") == 0) {
         unsigned short listen_port, backend_port;

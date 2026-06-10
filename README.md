@@ -61,3 +61,20 @@ overwrite an existing directory. `ca.key` is the private CA signing key;
 `server.key` is the server's private key. Never publish either key or install
 this development CA into the system trust store. The C proxy remains plaintext.
 Run `python3 tests/test_certificates.py` for disposable certificate tests.
+
+## Phase 10: OpenSSL object lifetime diagnostic
+
+The C executable now links to `libssl`/`libcrypto` and can validate that a
+server certificate and private key form a usable **TLS 1.3-only** `SSL_CTX`.
+The `SSL` object is created with two memory BIOs to demonstrate ownership,
+then all objects are freed. **No handshake or TLS listener exists yet.**
+
+```bash
+make certs                       # only if certs/ does not exist
+make clean && make && make test
+./build/tls-gateway --tls-check certs/server.crt certs/server.key
+```
+
+The diagnostic verifies that the certificate matches the key; it **does not**
+validate a remote peer or prove that a CA chain is trusted. The legacy TCP proxy
+remains plaintext. Run `python3 tests/test_tls_context.py` for negative tests.

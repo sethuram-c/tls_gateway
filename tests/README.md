@@ -14,3 +14,7 @@ behavior, and hostname matching. No test certificates are committed.
 Phase 9: `test_certificates.py` creates a throwaway CA and signed server cert,
 checks key permissions, chain, purpose, DNS/IP SAN, rejection of the wrong
 hostname, and refusal to overwrite existing secrets. No certs are committed.
+
+Phase 10: `test_tls_context.py` generates temporary certificates, runs the C
+`--tls-check` diagnostic and asserts success, key mismatch rejection, missing
+certificate rejection and CLI errors. It needs no listener or checked-in keys.

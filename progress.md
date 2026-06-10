@@ -9,6 +9,7 @@
 - [x] Phase 7 - Bidirectional TCP forwarding (2026-12-07)
 - [x] Phase 8 - TLS 1.3 handshake concepts and verification lab (2026-12-08)
 - [x] Phase 9 - Generate local CA and server certificates (2026-12-09)
-- [ ] Phase 10 - Understand OpenSSL SSL_CTX, SSL and BIO
+- [x] Phase 10 - OpenSSL SSL_CTX, SSL and BIO diagnostic (2026-12-10)
+- [ ] Phase 11 - Initialize TLS server
 
 Phase PDFs are personal learning resources, never committed to the repository.
