@@ -78,3 +78,24 @@ make clean && make && make test
 The diagnostic verifies that the certificate matches the key; it **does not**
 validate a remote peer or prove that a CA chain is trusted. The legacy TCP proxy
 remains plaintext. Run `python3 tests/test_tls_context.py` for negative tests.
+
+## Phase 11: TLS listener setup (no handshake yet)
+
+The gateway now creates one TLS 1.3-only `SSL_CTX`, binds a loopback TCP
+listener, and prepares an `SSL` object for each accepted TCP connection.
+It immediately closes that connection: **there is no `SSL_accept()` yet**,
+so `openssl s_client` and HTTPS requests are intentionally unsuccessful.
+
+```bash
+make certs  # only if certs/ does not exist
+make clean && make && make test
+./build/tls-gateway --tls-listen certs/server.crt certs/server.key 18443
+# In a second terminal:
+ss -ltnp '( sport = :18443 )'
+# Ctrl+C to stop the listener
+```
+
+Listen address is restricted to `127.0.0.1`. No development private key
+is included in source control. `tests/test_tls_listener.py` generates
+disposable certificates, validates repeated accepts and clean termination,
+and checks expected failures. TLS handshaking starts in Phase 12.

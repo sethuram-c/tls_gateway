@@ -18,3 +18,8 @@ hostname, and refusal to overwrite existing secrets. No certs are committed.
 Phase 10: `test_tls_context.py` generates temporary certificates, runs the C
 `--tls-check` diagnostic and asserts success, key mismatch rejection, missing
 certificate rejection and CLI errors. It needs no listener or checked-in keys.
+
+Phase 11: `test_tls_listener.py` runs the C loopback TLS listener with
+disposable certificates and tests TCP acceptance, expected handshake failure
+(because `SSL_accept` is a future phase), graceful SIGTERM shutdown,
+invalid certificates/ports, and port-in-use failure.

@@ -4,6 +4,7 @@
 #include "socket_demo.h"
 #include "tcp_server.h"
 #include "tls_context.h"
+#include "tls_listener.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +12,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -46,6 +47,14 @@ int main(int argc, char *argv[])
     }
     if (argc == 4 && strcmp(argv[1], "--tls-check") == 0) {
         return run_tls_check(argv[2], argv[3]);
+    }
+    if (argc == 5 && strcmp(argv[1], "--tls-listen") == 0) {
+        unsigned short port;
+        if (parse_port(argv[4], &port) < 0) {
+            fputs("invalid TLS listener port (expected 1..65535)\n", stderr);
+            return 2;
+        }
+        return run_tls_listener(argv[2], argv[3], port);
     }
     if (argc == 4 && strcmp(argv[1], "--tcp-proxy") == 0) {
         unsigned short listen_port, backend_port;
