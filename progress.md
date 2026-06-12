@@ -11,6 +11,7 @@
 - [x] Phase 9 - Generate local CA and server certificates (2026-12-09)
 - [x] Phase 10 - OpenSSL SSL_CTX, SSL and BIO diagnostic (2026-12-10)
 - [x] Phase 11 - Initialize TLS listener (2026-12-11)
-- [ ] Phase 12 - Implement TLS handshake with SSL_accept
+- [x] Phase 12 - Implement TLS handshake with SSL_accept (2026-12-12)
+- [ ] Phase 13 - Read encrypted application data with SSL_read
 
 Phase PDFs are personal learning resources, never committed to the repository.

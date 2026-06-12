@@ -99,3 +99,29 @@ Listen address is restricted to `127.0.0.1`. No development private key
 is included in source control. `tests/test_tls_listener.py` generates
 disposable certificates, validates repeated accepts and clean termination,
 and checks expected failures. TLS handshaking starts in Phase 12.
+
+## Phase 12: first TLS 1.3 handshake in C
+
+The `--tls-listen` command now calls **`SSL_accept()`** on each accepted
+client socket and prints the negotiated TLS version and cipher. Only TLS 1.3
+is enabled. After a successful handshake, the gateway sends TLS `close_notify`
+and closes the connection; **it does not read or send HTTP yet**. `SSL_read()`
+and `SSL_write()` are introduced in the next phases.
+
+```bash
+make certs  # only if certs/ is absent
+make clean && make && make test
+./build/tls-gateway --tls-listen certs/server.crt certs/server.key 18443
+# In another terminal:
+openssl s_client -tls1_3 -connect 127.0.0.1:18443 \
+  -servername localhost -CAfile certs/ca.crt \
+  -verify_hostname localhost -verify_return_error </dev/null
+```
+
+Expect `Verification: OK` in the OpenSSL client and `TLS handshake complete`
+on the server. Each connection is still handled **sequentially**, with a
+3-second socket receive/send timeout during handshaking to avoid hanging
+forever on silent peers. A failed client handshake is logged and does not
+terminate the listener. Only loopback is exposed. Do not use this lab server
+for public traffic or expect HTTPS responses yet. The learning PDF is a
+separate personal artifact and is not included in the repository.

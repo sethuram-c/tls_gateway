@@ -23,3 +23,8 @@ Phase 11: `test_tls_listener.py` runs the C loopback TLS listener with
 disposable certificates and tests TCP acceptance, expected handshake failure
 (because `SSL_accept` is a future phase), graceful SIGTERM shutdown,
 invalid certificates/ports, and port-in-use failure.
+
+Phase 12: `test_tls_listener.py` now verifies real, trusted TLS 1.3
+handshakes, rejects wrong hostnames and untrusted development CAs, checks
+plaintext and TLS 1.2 rejection, exercises repeated connections, shutdown,
+and invalid configuration. The gateway intentionally sends no HTTP yet.
