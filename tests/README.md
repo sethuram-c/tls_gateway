@@ -28,3 +28,8 @@ Phase 12: `test_tls_listener.py` now verifies real, trusted TLS 1.3
 handshakes, rejects wrong hostnames and untrusted development CAs, checks
 plaintext and TLS 1.2 rejection, exercises repeated connections, shutdown,
 and invalid configuration. The gateway intentionally sends no HTTP yet.
+
+Phase 13: `test_tls_listener.py` now sends application bytes before expecting
+TLS closure. `test_tls_read.py` exercises text, binary payloads, bounded reads,
+empty close_notify, and a silent client, using temporary CA/server certificates.
+No certificates or learning PDF belong in Git.

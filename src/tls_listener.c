@@ -13,6 +13,9 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#define TLS_READ_CAPACITY 4096
+#define TLS_HEX_PREVIEW_BYTES 24
+
 static volatile sig_atomic_t stop_requested = 0;
 
 static void request_stop(int signum)
@@ -30,14 +33,14 @@ static int install_handlers(void)
     sigemptyset(&stop_action.sa_mask);
     sigemptyset(&ignore_action.sa_mask);
 
-    /* TLS peers can disconnect mid-write; handle EPIPE instead of SIGPIPE. */
+    /* Disconnected TLS peers should not terminate the whole process. */
     return sigaction(SIGINT, &stop_action, NULL) == 0 &&
            sigaction(SIGTERM, &stop_action, NULL) == 0 &&
            sigaction(SIGPIPE, &ignore_action, NULL) == 0 ? 0 : -1;
 }
 
-/* Blocking SSL_accept() must not let one stalled client block us forever. */
-static int set_handshake_timeout(int fd)
+/* Blocking read and handshake must not wait forever for a silent peer. */
+static int set_socket_timeout(int fd)
 {
     struct timeval timeout = {.tv_sec = 3, .tv_usec = 0};
     return setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
@@ -46,14 +49,30 @@ static int set_handshake_timeout(int fd)
                       &timeout, sizeof(timeout)) == 0 ? 0 : -1;
 }
 
-/* Phase 12: complete only the TLS handshake (no application data yet). */
-static int handshake_one_client(SSL_CTX *context, int client)
+/* Avoid writing untrusted or binary client input directly into logs.
+ * This short hexadecimal preview is for the local learning lab only. */
+static void report_received_data(const unsigned char *bytes, int count)
+{
+    int shown = count < TLS_HEX_PREVIEW_BYTES ? count : TLS_HEX_PREVIEW_BYTES;
+    printf("TLS application data read: %d bytes; first %d bytes (hex):",
+           count, shown);
+    for (int i = 0; i < shown; i++) {
+        printf(" %02x", (unsigned)bytes[i]);
+    }
+    if (shown < count) printf(" ...");
+    putchar('\n');
+    fflush(stdout);
+}
+
+/* Phase 13: decrypt and read ONE bounded block after a completed handshake.
+ * There is no HTTP parser and no TLS application response until Phase 14. */
+static int serve_one_client(SSL_CTX *context, int client)
 {
     SSL *ssl = SSL_new(context);
     if (ssl == NULL) {
         fputs("Cannot allocate per-client SSL object\n", stderr);
         ERR_print_errors_fp(stderr);
-        return -1; /* Fatal local resource/configuration failure. */
+        return -1;
     }
 
     if (SSL_set_fd(ssl, client) != 1) {
@@ -69,18 +88,34 @@ static int handshake_one_client(SSL_CTX *context, int client)
                SSL_get_version(ssl), SSL_get_cipher(ssl));
         fflush(stdout);
 
-        /* Send close_notify once. Phase 13 will introduce SSL_read(). */
+        unsigned char buffer[TLS_READ_CAPACITY];
+        int received = SSL_read(ssl, buffer, (int)sizeof(buffer));
+        if (received > 0) {
+            /* SSL_read() returns decrypted APPLICATION bytes, not TLS records. */
+            report_received_data(buffer, received);
+        } else {
+            /* SSL_get_error() must receive this call's exact return value. */
+            int reason = SSL_get_error(ssl, received);
+            if (reason == SSL_ERROR_ZERO_RETURN) {
+                puts("TLS peer closed cleanly before sending application data");
+            } else if (!stop_requested) {
+                fprintf(stderr, "TLS application read ended (SSL error %d)\n",
+                        reason);
+                ERR_print_errors_fp(stderr);
+            }
+        }
+        fflush(stdout);
+        /* One best-effort close_notify; never wait for the peer here. */
         (void)SSL_shutdown(ssl);
     } else {
-        int ssl_error = SSL_get_error(ssl, accepted);
+        int reason = SSL_get_error(ssl, accepted);
         if (!stop_requested) {
-            fprintf(stderr, "TLS handshake rejected (SSL error %d)\n", ssl_error);
+            fprintf(stderr, "TLS handshake rejected (SSL error %d)\n", reason);
             ERR_print_errors_fp(stderr);
         }
-        /* A malformed/untrusted/disconnected peer must not kill the server. */
     }
 
-    /* SSL_set_fd uses a socket BIO with BIO_NOCLOSE: caller closes client. */
+    /* SSL_set_fd() uses a non-owning socket BIO: caller closes client. */
     SSL_free(ssl);
     return 0;
 }
@@ -124,7 +159,7 @@ int run_tls_listener(const char *certificate_path,
         return 1;
     }
 
-    printf("TLS listener ready on 127.0.0.1:%u (TLS 1.3 handshake enabled)\n",
+    printf("TLS listener ready on 127.0.0.1:%u (TLS 1.3 read lab)\n",
            (unsigned)port);
     fflush(stdout);
 
@@ -132,21 +167,21 @@ int run_tls_listener(const char *certificate_path,
     while (!stop_requested) {
         int client = accept(listener, NULL, NULL);
         if (client < 0) {
-            if (errno == EINTR) continue; /* Re-check stop_requested. */
+            if (errno == EINTR) continue;
             perror("accept");
             result = 1;
             break;
         }
 
-        if (set_handshake_timeout(client) != 0) {
-            perror("TLS handshake socket timeout");
+        if (set_socket_timeout(client) != 0) {
+            perror("TLS socket timeout");
             close(client);
             result = 1;
             break;
         }
 
-        int status = handshake_one_client(context, client);
-        close(client);  /* Always release the accepted TCP file descriptor. */
+        int status = serve_one_client(context, client);
+        close(client);
         if (status != 0) {
             result = 1;
             break;

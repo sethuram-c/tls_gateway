@@ -42,6 +42,7 @@ test: $(TARGET)
 	python3 tests/test_certificates.py
 	python3 tests/test_tls_context.py
 	python3 tests/test_tls_listener.py
+	python3 tests/test_tls_read.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

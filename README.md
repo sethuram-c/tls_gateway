@@ -125,3 +125,28 @@ forever on silent peers. A failed client handshake is logged and does not
 terminate the listener. Only loopback is exposed. Do not use this lab server
 for public traffic or expect HTTPS responses yet. The learning PDF is a
 separate personal artifact and is not included in the repository.
+
+## Phase 13: read decrypted TLS application bytes
+
+The `--tls-listen` loop now performs a successful TLS 1.3 handshake and then
+reads **one block of up to 4096 decrypted bytes** with `SSL_read()`. It logs
+only a short **hexadecimal** preview so binary input cannot inject terminal
+control sequences. The preview is educational, and must not be enabled for
+real user traffic (which may contain secrets). It neither parses HTTP nor
+returns an HTTP response: `SSL_write()` comes in Phase 14.
+
+```bash
+make clean && make && make test
+make certs  # only if certs/ is absent
+./build/tls-gateway --tls-listen certs/server.crt certs/server.key 18443
+# separate terminal: 
+printf 'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n' | \
+  openssl s_client -quiet -tls1_3 -connect 127.0.0.1:18443 \
+    -servername localhost -CAfile certs/ca.crt -verify_hostname localhost
+```
+
+Look for `TLS application data read: ... bytes` in the gateway log. A client
+that sends no data is bounded by a 3-second socket timeout, and clients are
+still handled one at a time. One `SSL_read()` may read only part of a larger
+application message; robust stream framing comes later. `make test` runs
+`tests/test_tls_read.py` as well as regression suites.

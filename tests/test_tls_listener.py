@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 12: real TLS 1.3 SSL_accept() integration tests (standard library)."""
+"""Phase 13: TLS 1.3 listener regression tests (standard library)."""
 import select
 import signal
 import socket
@@ -45,11 +45,12 @@ def tls_connect(port, context, hostname="localhost"):
         with context.wrap_socket(transport, server_hostname=hostname) as secured:
             assert secured.version() == "TLSv1.3", secured.version()
             assert secured.cipher()[0].startswith("TLS_"), secured.cipher()
-            assert secured.recv(1) == b""  # Phase 12 sends no application data.
+            secured.sendall(b"GET /listener HTTP/1.0\r\n\r\n")
+            assert secured.recv(1) == b""  # Phase 13 reads but does not reply.
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="tls-gateway-phase12-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="tls-gateway-phase13-") as tmp:
         certs = Path(tmp) / "certs"
         subprocess.run(["bash", str(GENERATOR), str(certs)], check=True,
                        capture_output=True, text=True, timeout=25)
