@@ -33,3 +33,9 @@ Phase 13: `test_tls_listener.py` now sends application bytes before expecting
 TLS closure. `test_tls_read.py` exercises text, binary payloads, bounded reads,
 empty close_notify, and a silent client, using temporary CA/server certificates.
 No certificates or learning PDF belong in Git.
+
+Phase 14: `test_tls_write.py` verifies an actual HTTPS response through the C
+OpenSSL listener: trusted TLS 1.3, HTTP status/headers/body, multiple requests,
+no response before input, and TLS 1.2 rejection. Phase 13 read tests now
+expect a response after nonempty data. Tests use a temporary CA and ephemeral
+ports; no certificate or PDF is committed.

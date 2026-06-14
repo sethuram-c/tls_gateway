@@ -150,3 +150,27 @@ that sends no data is bounded by a 3-second socket timeout, and clients are
 still handled one at a time. One `SSL_read()` may read only part of a larger
 application message; robust stream framing comes later. `make test` runs
 `tests/test_tls_read.py` as well as regression suites.
+
+## Phase 14: send HTTPS response with SSL_write
+
+The TLS listener now returns a valid **fixed HTTP/1.1 response over TLS**
+when it receives at least one decrypted application-data block. The
+response includes `Content-Length: 23` and `Connection: close`.
+
+```bash
+make clean && make && make test
+make certs  # only if certs/ is missing
+./build/tls-gateway --tls-listen certs/server.crt certs/server.key 18443
+# Another terminal:
+curl --cacert certs/ca.crt https://localhost:18443/
+```
+
+Expected body: `hello from tls gateway`. You can also use the Python
+`tests/test_tls_write.py` suite, which generates and cleans up its own CA.
+
+**Limitations:** This is an educational, single-client-at-a-time server, not
+an HTTP parser or reverse proxy. It reads only the first 4096 decrypted bytes,
+returns the same response for any nonempty payload, uses blocking I/O and a
+3-second timeout, and does not yet connect to the Python backend. The hex
+preview is for this lab only; application data may contain secrets. Full TLS
+termination + backend forwarding is Phase 15. Learning PDFs stay outside Git.

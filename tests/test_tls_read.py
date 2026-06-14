@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 13: verify a bounded SSL_read and safe binary logging."""
+"""Phase 14 regression: verify bounded SSL_read and binary-safe logging."""
 import signal
 import socket
 import ssl
@@ -15,7 +15,14 @@ def send_application_data(port, context, payload):
         transport.settimeout(5)
         with context.wrap_socket(transport, server_hostname="localhost") as secured:
             secured.sendall(payload)
-            assert secured.recv(1) == b"", "Phase 13 must not send app data"
+            # Phase 14 now sends a small HTTPS response for any input block.
+            reply = bytearray()
+            while True:
+                block = secured.recv(4096)
+                if not block:
+                    break
+                reply.extend(block)
+            assert reply.startswith(b"HTTP/1.1 200 OK\r\n"), reply
 
 
 def main():

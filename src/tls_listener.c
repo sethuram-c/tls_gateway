@@ -16,6 +16,15 @@
 #define TLS_READ_CAPACITY 4096
 #define TLS_HEX_PREVIEW_BYTES 24
 
+/* An educational, fixed HTTP response. No request parsing or backend yet. */
+static const unsigned char http_response[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: text/plain; charset=utf-8\r\n"
+    "Content-Length: 23\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "hello from tls gateway\n";
+
 static volatile sig_atomic_t stop_requested = 0;
 
 static void request_stop(int signum)
@@ -64,8 +73,34 @@ static void report_received_data(const unsigned char *bytes, int count)
     fflush(stdout);
 }
 
-/* Phase 13: decrypt and read ONE bounded block after a completed handshake.
- * There is no HTTP parser and no TLS application response until Phase 14. */
+/* Phase 14: send a complete, fixed HTTP reply through the TLS channel.
+ * SSL_write() can make less progress than requested; never ignore its count.
+ * Blocking sockets have 3-second send/receive timeouts in this lab. */
+static int write_http_response(SSL *ssl)
+{
+    size_t sent = 0;
+    const size_t total = sizeof(http_response) - 1; /* exclude C's NUL */
+
+    while (sent < total) {
+        int remaining = (int)(total - sent); /* response is tiny */
+        int written = SSL_write(ssl, http_response + sent, remaining);
+        if (written <= 0) {
+            int reason = SSL_get_error(ssl, written);
+            fprintf(stderr, "TLS application write failed (SSL error %d)\n",
+                    reason);
+            ERR_print_errors_fp(stderr);
+            return -1;
+        }
+        sent += (size_t)written;
+    }
+
+    printf("TLS HTTP response sent: %zu bytes\n", sent);
+    fflush(stdout);
+    return 0;
+}
+
+/* Phase 14: decrypt one bounded input block and send one fixed HTTP reply.
+ * Parsing a full HTTP request and forwarding to a backend are future work. */
 static int serve_one_client(SSL_CTX *context, int client)
 {
     SSL *ssl = SSL_new(context);
@@ -93,6 +128,7 @@ static int serve_one_client(SSL_CTX *context, int client)
         if (received > 0) {
             /* SSL_read() returns decrypted APPLICATION bytes, not TLS records. */
             report_received_data(buffer, received);
+            (void)write_http_response(ssl);
         } else {
             /* SSL_get_error() must receive this call's exact return value. */
             int reason = SSL_get_error(ssl, received);
@@ -159,7 +195,7 @@ int run_tls_listener(const char *certificate_path,
         return 1;
     }
 
-    printf("TLS listener ready on 127.0.0.1:%u (TLS 1.3 read lab)\n",
+    printf("TLS listener ready on 127.0.0.1:%u (TLS 1.3 HTTPS reply lab)\n",
            (unsigned)port);
     fflush(stdout);
 
