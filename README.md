@@ -174,3 +174,37 @@ returns the same response for any nonempty payload, uses blocking I/O and a
 3-second timeout, and does not yet connect to the Python backend. The hex
 preview is for this lab only; application data may contain secrets. Full TLS
 termination + backend forwarding is Phase 15. Learning PDFs stay outside Git.
+
+## Phase 15: HTTPS termination with HTTP backend forwarding
+
+New command (loopback-only, blocking):
+
+```bash
+make clean && make && make test
+make certs  # only if certs/ has not already been generated
+# Terminal 1:
+python3 tests/http_backend.py
+# Terminal 2:
+./build/tls-gateway --tls-proxy certs/server.crt certs/server.key 18443 18081
+# Terminal 3:
+curl -i --cacert certs/ca.crt https://localhost:18443/health
+curl -i --cacert certs/ca.crt https://localhost:18443/
+curl -i --cacert certs/ca.crt https://localhost:18443/missing
+```
+
+The TLS connection ends at the C gateway, which opens a **plaintext** HTTP
+connection to the Python backend at `127.0.0.1:18081`. Requests are forwarded
+as raw HTTP header bytes; responses are relayed through `SSL_write()`.
+`/health` produces `ok`, `/` produces `hello from python backend`, and unknown
+paths preserve the backend's `404` status. An unreachable backend returns `502`.
+
+**Learning-stage limitations:** TLS 1.3 only; sequential blocking clients;
+loopback-only; only single, bodyless `GET` requests with at most 8192 header
+bytes; no pipelining, keep-alive or POST; maximum backend response transfer
+1 MiB; 3-second socket I/O timeouts. No full HTTP parser, streaming request
+bodies, non-blocking I/O, or upstream TLS. These are deliberate boundaries for
+this lesson, **not** a production-ready HTTP proxy. The previous `--tls-listen`
+fixed-response lab remains available and all its regression tests still run.
+
+Run `python3 tests/test_tls_proxy.py` for the full HTTPS-forwarding integration
+suite. The personal learning PDF is not part of the repo.

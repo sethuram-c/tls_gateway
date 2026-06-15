@@ -12,7 +12,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -55,6 +55,16 @@ int main(int argc, char *argv[])
             return 2;
         }
         return run_tls_listener(argv[2], argv[3], port);
+    }
+    if (argc == 6 && strcmp(argv[1], "--tls-proxy") == 0) {
+        unsigned short listen_port, backend_port;
+        if (parse_port(argv[4], &listen_port) < 0 ||
+            parse_port(argv[5], &backend_port) < 0 ||
+            listen_port == backend_port) {
+            fputs("invalid TLS proxy ports (1..65535, must differ)\n", stderr);
+            return 2;
+        }
+        return run_tls_proxy(argv[2], argv[3], listen_port, backend_port);
     }
     if (argc == 4 && strcmp(argv[1], "--tcp-proxy") == 0) {
         unsigned short listen_port, backend_port;

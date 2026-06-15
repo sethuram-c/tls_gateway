@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "tls_listener.h"
 #include "tls_context.h"
+#include "tls_forward.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -99,9 +100,9 @@ static int write_http_response(SSL *ssl)
     return 0;
 }
 
-/* Phase 14: decrypt one bounded input block and send one fixed HTTP reply.
- * Parsing a full HTTP request and forwarding to a backend are future work. */
-static int serve_one_client(SSL_CTX *context, int client)
+/* Phase 15: reuse TLS handshake and shutdown code for both lab modes.
+ * Legacy listener sends a fixed reply; proxy mode calls tls_forward_request. */
+static int serve_one_client(SSL_CTX *context, int client, unsigned short backend_port)
 {
     SSL *ssl = SSL_new(context);
     if (ssl == NULL) {
@@ -123,21 +124,26 @@ static int serve_one_client(SSL_CTX *context, int client)
                SSL_get_version(ssl), SSL_get_cipher(ssl));
         fflush(stdout);
 
-        unsigned char buffer[TLS_READ_CAPACITY];
-        int received = SSL_read(ssl, buffer, (int)sizeof(buffer));
-        if (received > 0) {
-            /* SSL_read() returns decrypted APPLICATION bytes, not TLS records. */
-            report_received_data(buffer, received);
-            (void)write_http_response(ssl);
+        if (backend_port != 0) {
+            /* Phase 15: TLS ends here; the upstream leg is plain HTTP. */
+            (void)tls_forward_request(ssl, backend_port);
         } else {
-            /* SSL_get_error() must receive this call's exact return value. */
-            int reason = SSL_get_error(ssl, received);
-            if (reason == SSL_ERROR_ZERO_RETURN) {
-                puts("TLS peer closed cleanly before sending application data");
-            } else if (!stop_requested) {
-                fprintf(stderr, "TLS application read ended (SSL error %d)\n",
-                        reason);
-                ERR_print_errors_fp(stderr);
+            unsigned char buffer[TLS_READ_CAPACITY];
+            int received = SSL_read(ssl, buffer, (int)sizeof(buffer));
+            if (received > 0) {
+                /* SSL_read() returns decrypted APPLICATION bytes, not TLS records. */
+                report_received_data(buffer, received);
+                (void)write_http_response(ssl);
+            } else {
+                /* SSL_get_error() must receive this call's exact return value. */
+                int reason = SSL_get_error(ssl, received);
+                if (reason == SSL_ERROR_ZERO_RETURN) {
+                    puts("TLS peer closed cleanly before sending application data");
+                } else if (!stop_requested) {
+                    fprintf(stderr, "TLS application read ended (SSL error %d)\n",
+                            reason);
+                    ERR_print_errors_fp(stderr);
+                }
             }
         }
         fflush(stdout);
@@ -156,9 +162,9 @@ static int serve_one_client(SSL_CTX *context, int client)
     return 0;
 }
 
-int run_tls_listener(const char *certificate_path,
-                     const char *private_key_path,
-                     unsigned short port)
+static int run_tls_server(const char *certificate_path,
+                          const char *private_key_path,
+                          unsigned short port, unsigned short backend_port)
 {
     SSL_CTX *context = tls_server_context_new(certificate_path, private_key_path);
     if (context == NULL) {
@@ -195,8 +201,12 @@ int run_tls_listener(const char *certificate_path,
         return 1;
     }
 
-    printf("TLS listener ready on 127.0.0.1:%u (TLS 1.3 HTTPS reply lab)\n",
-           (unsigned)port);
+    if (backend_port == 0)
+        printf("TLS listener ready on 127.0.0.1:%u (TLS 1.3 HTTPS reply lab)\n",
+               (unsigned)port);
+    else
+        printf("TLS proxy ready on 127.0.0.1:%u -> 127.0.0.1:%u (TLS 1.3)\n",
+               (unsigned)port, (unsigned)backend_port);
     fflush(stdout);
 
     int result = 0;
@@ -216,7 +226,7 @@ int run_tls_listener(const char *certificate_path,
             break;
         }
 
-        int status = serve_one_client(context, client);
+        int status = serve_one_client(context, client, backend_port);
         close(client);
         if (status != 0) {
             result = 1;
@@ -226,6 +236,19 @@ int run_tls_listener(const char *certificate_path,
 
     close(listener);
     SSL_CTX_free(context);
-    puts("TLS listener stopped");
+    puts(backend_port == 0 ? "TLS listener stopped" : "TLS proxy stopped");
     return result;
+}
+
+int run_tls_listener(const char *certificate_path,
+                     const char *private_key_path, unsigned short port)
+{
+    return run_tls_server(certificate_path, private_key_path, port, 0);
+}
+
+int run_tls_proxy(const char *certificate_path,
+                  const char *private_key_path, unsigned short port,
+                  unsigned short backend_port)
+{
+    return run_tls_server(certificate_path, private_key_path, port, backend_port);
 }

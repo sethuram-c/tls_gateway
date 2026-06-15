@@ -39,3 +39,12 @@ OpenSSL listener: trusted TLS 1.3, HTTP status/headers/body, multiple requests,
 no response before input, and TLS 1.2 rejection. Phase 13 read tests now
 expect a response after nonempty data. Tests use a temporary CA and ephemeral
 ports; no certificate or PDF is committed.
+
+## Phase 15: C TLS-to-HTTP gateway integration
+
+Run `python3 tests/test_tls_proxy.py` (included in `make test`). It creates a
+temporary CA/server certificate, starts the Python HTTP backend and C gateway,
+verifies backend status/body (200/404), fragmented TLS request headers,
+unsupported method handling, TLS 1.2 refusal, SIGTERM cleanup, invalid port
+arguments and the 502 response when upstream is down. Private keys are removed
+after the test. All traffic stays on 127.0.0.1.

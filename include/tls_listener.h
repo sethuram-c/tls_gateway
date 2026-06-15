@@ -7,4 +7,9 @@ int run_tls_listener(const char *certificate_path,
                      const char *private_key_path,
                      unsigned short port);
 
+/* Phase 15: TLS-terminating loopback reverse proxy. */
+int run_tls_proxy(const char *certificate_path,
+                  const char *private_key_path, unsigned short port,
+                  unsigned short backend_port);
+
 #endif
