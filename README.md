@@ -208,3 +208,24 @@ fixed-response lab remains available and all its regression tests still run.
 
 Run `python3 tests/test_tls_proxy.py` for the full HTTPS-forwarding integration
 suite. The personal learning PDF is not part of the repo.
+
+## Phase 16: non-blocking socket behavior lab (no production socket changes)
+
+```bash
+make clean && make && make test
+./build/tls-gateway --nonblock-demo
+python3 tests/test_nonblock_demo.py
+```
+
+The demo uses a local `socketpair(AF_UNIX, SOCK_STREAM)` (no TCP listener
+or network ports). It marks one endpoint `O_NONBLOCK` with `fcntl()` and
+contrasts: an empty `recv()` returning `-1`/`EAGAIN`, two intentionally
+small reads of a five-byte message, `recv() == 0` after peer `SHUT_WR`,
+and a send buffer that eventually fills (`send()` returns `EAGAIN`).
+The byte count before saturation varies by kernel and socket buffer size.
+
+**Scope:** The actual TLS reverse proxy from Phase 15 is still blocking.
+`O_NONBLOCK` will be applied to network sockets in Phase 17, followed
+by readiness polling/`epoll`. Do not treat EAGAIN as a disconnect, and
+remember that a successful `send()` need not send the whole application
+buffer. No PDF and no generated certificates are tracked in Git.

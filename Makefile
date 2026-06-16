@@ -2,19 +2,22 @@ CC := gcc
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -g
 CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
-OBJECTS := build/main.o build/log.o build/socket_demo.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
+OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
 .PHONY: all test clean certs
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ -lssl -lcrypto
-build/main.o: src/main.c include/log.h include/socket_demo.h include/tcp_server.h include/backend_connect.h include/tcp_proxy.h include/tls_context.h include/tls_listener.h
+build/main.o: src/main.c include/log.h include/socket_demo.h include/nonblock_demo.h include/tcp_server.h include/backend_connect.h include/tcp_proxy.h include/tls_context.h include/tls_listener.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/log.o: src/log.c include/log.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/socket_demo.o: src/socket_demo.c include/socket_demo.h
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/nonblock_demo.o: src/nonblock_demo.c include/nonblock_demo.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/tcp_server.o: src/tcp_server.c include/tcp_server.h
@@ -48,6 +51,7 @@ test: $(TARGET)
 	python3 tests/test_tls_read.py
 	python3 tests/test_tls_write.py
 	python3 tests/test_tls_proxy.py
+	python3 tests/test_nonblock_demo.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

@@ -15,6 +15,7 @@
 - [x] Phase 13 - Read decrypted application data with SSL_read (2026-12-13)
 - [x] Phase 14 - Send encrypted HTTP responses with SSL_write (2026-12-14)
 - [x] Phase 15 - Integrate TLS termination with backend forwarding (2026-12-15)
-- [ ] Phase 16 - Non-blocking I/O fundamentals
+- [x] Phase 16 - Non-blocking I/O fundamentals (2026-12-16)
+- [ ] Phase 17 - Add non-blocking socket flag helper
 
 Phase PDFs are personal learning resources, never committed to the repository.

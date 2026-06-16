@@ -48,3 +48,11 @@ verifies backend status/body (200/404), fragmented TLS request headers,
 unsupported method handling, TLS 1.2 refusal, SIGTERM cleanup, invalid port
 arguments and the 502 response when upstream is down. Private keys are removed
 after the test. All traffic stays on 127.0.0.1.
+
+## Phase 16: non-blocking I/O lab
+
+Run `python3 tests/test_nonblock_demo.py` or `make test`. The test executes
+`--nonblock-demo` three times, checking empty-read `EAGAIN`, short reads,
+EOF after half-close and send-buffer backpressure. Tests do not assume a
+specific kernel send-buffer size. The C demo uses socketpair, so there are
+no open listening ports or TLS certificate requirements.
