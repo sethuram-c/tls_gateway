@@ -17,6 +17,8 @@ def main():
         result = run("--nonblock-demo")
         assert result.returncode == 0, (result.stdout, result.stderr)
         lines = result.stdout
+        assert "Flag helper: endpoint 0 non-blocking; endpoint 1 blocking" in lines
+        assert "Flag helper: restored endpoint 0 to blocking" in lines
         assert "Empty recv: EAGAIN (not EOF)" in lines
         assert "First recv: 2 bytes (he)" in lines
         assert "Second recv: 3 bytes (llo)" in lines

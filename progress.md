@@ -16,6 +16,7 @@
 - [x] Phase 14 - Send encrypted HTTP responses with SSL_write (2026-12-14)
 - [x] Phase 15 - Integrate TLS termination with backend forwarding (2026-12-15)
 - [x] Phase 16 - Non-blocking I/O fundamentals (2026-12-16)
-- [ ] Phase 17 - Add non-blocking socket flag helper
+- [x] Phase 17 - Reusable socket flag helpers for future epoll path (2026-12-17)
+- [ ] Phase 18 - Learn epoll event readiness
 
 Phase PDFs are personal learning resources, never committed to the repository.

@@ -2,7 +2,7 @@ CC := gcc
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -g
 CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
-OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
+OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
 .PHONY: all test clean certs
 all: $(TARGET)
@@ -17,7 +17,10 @@ build/log.o: src/log.c include/log.h
 build/socket_demo.o: src/socket_demo.c include/socket_demo.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-build/nonblock_demo.o: src/nonblock_demo.c include/nonblock_demo.h
+build/nonblock_demo.o: src/nonblock_demo.c include/nonblock_demo.h include/socket_flags.h
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/socket_flags.o: src/socket_flags.c include/socket_flags.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/tcp_server.o: src/tcp_server.c include/tcp_server.h
@@ -52,6 +55,7 @@ test: $(TARGET)
 	python3 tests/test_tls_write.py
 	python3 tests/test_tls_proxy.py
 	python3 tests/test_nonblock_demo.py
+	python3 tests/test_socket_flags.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

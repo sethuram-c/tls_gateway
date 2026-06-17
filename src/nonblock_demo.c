@@ -1,21 +1,12 @@
 #include "nonblock_demo.h"
+#include "socket_flags.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-
-/* Phase 16 is a lab. We do NOT change production TLS sockets yet. */
-static int enable_nonblocking(int fd)
-{
-    int flags = fcntl(fd, F_GETFL);
-    if (flags == -1) return -1;
-    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) return -1;
-    return 0;
-}
 
 static int is_would_block(int error)
 {
@@ -34,11 +25,17 @@ int run_nonblock_demo(void)
         perror("socketpair");
         return status;
     }
-    if (enable_nonblocking(sockets[0]) == -1) {
+    if (socket_set_nonblocking(sockets[0], true) == -1) {
         perror("fcntl(O_NONBLOCK)");
         goto cleanup;
     }
+    if (socket_is_nonblocking(sockets[0]) != 1 ||
+        socket_is_nonblocking(sockets[1]) != 0) {
+        fputs("unexpected socket flag state\n", stderr);
+        goto cleanup;
+    }
     puts("Non-blocking enabled on one socketpair endpoint");
+    puts("Flag helper: endpoint 0 non-blocking; endpoint 1 blocking");
 
     /* 1. No data is available, but the peer is still connected. */
     ssize_t n = recv(sockets[0], input, sizeof input, 0);
@@ -112,6 +109,12 @@ int run_nonblock_demo(void)
     }
     printf("Full send buffer: EAGAIN after %zu bytes (short sends: %zu)\n",
            bytes_sent, short_sends);
+    if (socket_set_nonblocking(sockets[0], false) == -1 ||
+        socket_is_nonblocking(sockets[0]) != 0) {
+        fputs("failed to restore blocking mode\n", stderr);
+        goto cleanup;
+    }
+    puts("Flag helper: restored endpoint 0 to blocking");
     puts("Demo complete: EAGAIN != EOF; reads and writes may be partial");
     status = 0;
 

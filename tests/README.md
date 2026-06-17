@@ -56,3 +56,11 @@ Run `python3 tests/test_nonblock_demo.py` or `make test`. The test executes
 EOF after half-close and send-buffer backpressure. Tests do not assume a
 specific kernel send-buffer size. The C demo uses socketpair, so there are
 no open listening ports or TLS certificate requirements.
+
+## Phase 17: socket flag helpers
+
+`test_socket_flags.py` compiles the tiny C fixture `socket_flags_probe.c` into
+an OS temporary directory and runs it, then checks the updated `--nonblock-demo`
+output. It covers toggling `O_NONBLOCK`, preserved status flags, repeated calls,
+independence of the two socketpair peers, sharing across `dup()` aliases,
+`EBADF` errors, and restoration to blocking mode. No ports or keys are needed.

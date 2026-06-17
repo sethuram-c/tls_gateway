@@ -229,3 +229,25 @@ The byte count before saturation varies by kernel and socket buffer size.
 by readiness polling/`epoll`. Do not treat EAGAIN as a disconnect, and
 remember that a successful `send()` need not send the whole application
 buffer. No PDF and no generated certificates are tracked in Git.
+
+## Phase 17: reusable non-blocking socket helpers
+
+`include/socket_flags.h` and `src/socket_flags.c` provide
+`socket_set_nonblocking(fd, true/false)` and `socket_is_nonblocking(fd)`.
+They use `fcntl(F_GETFL/F_SETFL)` to toggle **only** `O_NONBLOCK`, preserving
+other file status flags. A repeated toggle is safe; errors return `-1` and
+preserve `errno`. `O_NONBLOCK` belongs to the open file description, so it is
+shared with `dup()` aliases but **not** with the other socketpair endpoint.
+
+```bash
+make clean && make && make test
+./build/tls-gateway --nonblock-demo
+python3 tests/test_socket_flags.py
+```
+
+The existing Phase 16 demo now uses the helper and restores blocking mode
+before exit. Python drives a small temporary C test executable that checks
+flag preservation, idempotence, `dup()` semantics and `EBADF`. The current
+blocking TLS listener/proxy is intentionally **unchanged**: switching its
+sockets now would break `SSL_accept()`/`SSL_read()` without an event loop.
+Event readiness follows in Phase 18. Learning PDFs are kept out of Git.
