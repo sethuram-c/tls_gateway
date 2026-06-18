@@ -64,3 +64,10 @@ an OS temporary directory and runs it, then checks the updated `--nonblock-demo`
 output. It covers toggling `O_NONBLOCK`, preserved status flags, repeated calls,
 independence of the two socketpair peers, sharing across `dup()` aliases,
 `EBADF` errors, and restoration to blocking mode. No ports or keys are needed.
+
+## Phase 18: epoll readiness demo
+
+`test_epoll_demo.py` reruns `--epoll-demo` three times and checks event ordering
+for ADD, readable data, level-triggered repeat after short read, empty poll,
+MOD+EPOLLRDHUP, EOF, DEL and argument errors. It uses only Python's standard
+library and a Unix socketpair; no root, network ports, certs or test fixtures.

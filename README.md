@@ -251,3 +251,16 @@ flag preservation, idempotence, `dup()` semantics and `EBADF`. The current
 blocking TLS listener/proxy is intentionally **unchanged**: switching its
 sockets now would break `SSL_accept()`/`SSL_read()` without an event loop.
 Event readiness follows in Phase 18. Learning PDFs are kept out of Git.
+
+## Phase 18: epoll readiness lab (standalone)
+
+Run `./build/tls-gateway --epoll-demo` or `python3 tests/test_epoll_demo.py`.
+The C lab uses `socketpair()` (no ports and no certificates). It registers a
+non-blocking socket with `epoll_create1`/`epoll_ctl(ADD)`, shows level-triggered
+`EPOLLIN` persisting after a partial read, drains all data, changes interest with
+`MOD`, detects a peer write half-close using `EPOLLRDHUP`, and removes the fd
+using `DEL`. A zero-millisecond `epoll_wait` represents an **immediate poll**,
+not a busy-loop design for production. No server or gateway I/O is converted
+to epoll in this phase; that begins in Phase 19.
+
+To observe syscalls on Fedora: `strace -e trace=epoll_create1,epoll_ctl,epoll_wait,recvfrom,sendto,shutdown ./build/tls-gateway --epoll-demo`.
