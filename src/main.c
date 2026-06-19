@@ -3,6 +3,7 @@
 #include "log.h"
 #include "nonblock_demo.h"
 #include "epoll_demo.h"
+#include "epoll_server.h"
 #include "socket_demo.h"
 #include "tcp_server.h"
 #include "tls_context.h"
@@ -14,7 +15,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --nonblock-demo | --epoll-demo | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --nonblock-demo | --epoll-demo | --epoll-server PORT | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -41,6 +42,14 @@ int main(int argc, char *argv[])
     if (argc == 2 && strcmp(argv[1], "--nonblock-demo") == 0) return run_nonblock_demo();
     if (argc == 2 && strcmp(argv[1], "--epoll-demo") == 0) return run_epoll_demo();
     if (argc == 2 && strcmp(argv[1], "--tcp-server") == 0) return run_tcp_server();
+    if (argc == 3 && strcmp(argv[1], "--epoll-server") == 0) {
+        unsigned short port;
+        if (parse_port(argv[2], &port) < 0) {
+            fputs("invalid epoll listener port (expected 1..65535)\n", stderr);
+            return 2;
+        }
+        return run_epoll_server(port);
+    }
     if (argc == 3 && strcmp(argv[1], "--backend-connect") == 0) {
         unsigned short port;
         if (parse_port(argv[2], &port) < 0) {

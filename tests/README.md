@@ -71,3 +71,11 @@ independence of the two socketpair peers, sharing across `dup()` aliases,
 for ADD, readable data, level-triggered repeat after short read, empty poll,
 MOD+EPOLLRDHUP, EOF, DEL and argument errors. It uses only Python's standard
 library and a Unix socketpair; no root, network ports, certs or test fixtures.
+
+
+## Phase 19: non-blocking epoll TCP listener
+
+Run `python3 tests/test_epoll_server.py` to check dynamic loopback binding,
+concurrent open sockets, interleaved client reads, EOF handling, SIGTERM,
+port collisions, and argument validation. The listener intentionally
+receives/discards bytes; later phases will add connection state and forwarding.

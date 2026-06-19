@@ -264,3 +264,37 @@ not a busy-loop design for production. No server or gateway I/O is converted
 to epoll in this phase; that begins in Phase 19.
 
 To observe syscalls on Fedora: `strace -e trace=epoll_create1,epoll_ctl,epoll_wait,recvfrom,sendto,shutdown ./build/tls-gateway --epoll-demo`.
+
+
+## Phase 19: epoll-driven TCP listener (standalone)
+
+Run `./build/tls-gateway --epoll-server 18082` in one terminal. The listener
+binds to `127.0.0.1` and sets `O_NONBLOCK`, then registers itself with epoll.
+Each accepted client is also non-blocking (`accept4` with `SOCK_NONBLOCK`),
+registered for `EPOLLIN | EPOLLRDHUP`, and drained using `recv()` until
+`EAGAIN`, EOF, or a per-event 64-KiB fairness budget. The server **discards**
+received bytes and reports only byte counts; it does not echo or return HTTP.
+
+```bash
+make clean && make && make test
+# terminal A
+./build/tls-gateway --epoll-server 18082
+# terminal B (send a short message using only Python's standard library)
+python3 -c "import socket; s=socket.create_connection(('127.0.0.1', 18082)); s.sendall(b'hello'); s.close()"
+# terminal C
+ss -ltnp '( sport = :18082 )'
+```
+
+`python3 tests/test_epoll_server.py` starts the listener on an available
+loopback port, verifies overlapping idle client connections, interleaved
+payloads, EOF handling, SIGTERM cleanup, refused invalid CLI ports and a
+busy port. The Python command uses only the standard library and closes the client
+socket explicitly. No root privileges, certs, or third-party Python libraries
+are required.
+
+**Scope:** This is a dedicated epoll TCP receiver lab, not the TLS gateway's
+I/O path. The Phase 15 TLS proxy remains blocking and unchanged. For clarity,
+Phase 19 tracks live client fds in a fixed 128-slot array, and Phase 20 will
+introduce explicit per-connection structures. There is no application reply,
+TLS, backend routing, or persistent traffic buffer yet. Educational only,
+loopback-only; not production ready. Personal learning PDF is outside Git.

@@ -18,6 +18,6 @@
 - [x] Phase 16 - Non-blocking I/O fundamentals (2026-12-16)
 - [x] Phase 17 - Reusable socket flag helpers for future epoll path (2026-12-17)
 - [x] Phase 18 - Linux epoll readiness lab (2026-12-18)
-- [ ] Phase 19 - Build epoll-driven TCP listener
+- [x] Phase 19 - Build epoll-driven TCP listener (2026-12-19)
 
 Phase PDFs are personal learning resources, never committed to the repository.
