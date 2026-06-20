@@ -21,3 +21,4 @@
 - [x] Phase 19 - Build epoll-driven TCP listener (2026-12-19)
 
 Phase PDFs are personal learning resources, never committed to the repository.
+- [x] Phase 20 - Track per-client state and safe epoll connection lifecycle (2026-12-20)

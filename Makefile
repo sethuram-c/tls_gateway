@@ -2,7 +2,7 @@ CC := gcc
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -g
 CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
-OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
+OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/connection.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
 .PHONY: all test clean certs
 all: $(TARGET)
@@ -26,7 +26,10 @@ build/socket_flags.o: src/socket_flags.c include/socket_flags.h
 build/epoll_demo.o: src/epoll_demo.c include/epoll_demo.h include/socket_flags.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-build/epoll_server.o: src/epoll_server.c include/epoll_server.h include/socket_flags.h
+build/epoll_server.o: src/epoll_server.c include/epoll_server.h include/connection.h include/socket_flags.h
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/connection.o: src/connection.c include/connection.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/tcp_server.o: src/tcp_server.c include/tcp_server.h
@@ -64,6 +67,7 @@ test: $(TARGET)
 	python3 tests/test_socket_flags.py
 	python3 tests/test_epoll_demo.py
 	python3 tests/test_epoll_server.py
+	python3 tests/test_connection_registry.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

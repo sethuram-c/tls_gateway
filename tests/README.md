@@ -79,3 +79,12 @@ Run `python3 tests/test_epoll_server.py` to check dynamic loopback binding,
 concurrent open sockets, interleaved client reads, EOF handling, SIGTERM,
 port collisions, and argument validation. The listener intentionally
 receives/discards bytes; later phases will add connection state and forwarding.
+
+## Phase 20: connection registry and lifecycle
+
+`python3 tests/test_connection_registry.py` compiles `tests/connection_probe.c`
+with `src/connection.c` and checks owning/closing descriptors, slot reuse,
+unique generation tokens, capacity (128), and cleanup. It also runs the real
+`--epoll-server` with three overlapping clients, verifies independent byte
+totals and active counts, and reopens a client to check token uniqueness.
+`test_epoll_server.py` is retained as a Phase 19 regression test.

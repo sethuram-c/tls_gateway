@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "epoll_server.h"
+#include "connection.h"
 #include "socket_flags.h"
 
 #include <arpa/inet.h>
@@ -8,14 +9,13 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-#define MAX_CLIENTS 128
 #define MAX_EVENTS 32
 #define READ_BUDGET (64 * 1024)
+#define LISTENER_TOKEN UINT64_C(0)
 
 static volatile sig_atomic_t stop_requested;
 
@@ -62,37 +62,25 @@ static int open_listener(unsigned short port)
     return fd;
 }
 
-static int find_slot(const int clients[MAX_CLIENTS])
+static void close_client(int epfd, ConnectionRegistry *registry, Connection *client)
 {
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        if (clients[i] == -1) return i;
-    }
-    return -1;
-}
-
-static void close_client(int epfd, int clients[MAX_CLIENTS], int fd)
-{
-    /* EPOLL_CTL_DEL is explicit for clarity; close() also removes the
-     * registration when the last reference to this fd is closed. */
+    int fd = client->fd;
+    uint64_t total = client->bytes_read;
+    /* DEL before close: an old queued event can no longer target this fd. */
     if (epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL) < 0) {
         perror("epoll_ctl DEL client");
     }
-    close(fd);
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        if (clients[i] == fd) {
-            clients[i] = -1;
-            break;
-        }
-    }
+    connection_release(registry, client);
+    printf("Client fd=%d total received=%llu bytes; active=%zu\n", fd,
+           (unsigned long long)total, registry->active);
     printf("Client fd=%d closed\n", fd);
 }
 
-static int accept_ready_clients(int epfd, int listener, int clients[MAX_CLIENTS])
+static int accept_ready_clients(int epfd, int listener, ConnectionRegistry *registry)
 {
     for (;;) {
         struct sockaddr_in peer = {0};
         socklen_t length = sizeof(peer);
-        /* accept4 atomically sets non-blocking + close-on-exec. */
         int fd = accept4(listener, (struct sockaddr *)&peer, &length,
                          SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (fd < 0) {
@@ -101,40 +89,42 @@ static int accept_ready_clients(int epfd, int listener, int clients[MAX_CLIENTS]
             perror("accept4");
             return -1;
         }
-
-        int slot = find_slot(clients);
-        if (slot < 0) {
+        Connection *client = connection_register(registry, fd, &peer);
+        if (client == NULL) {
             fputs("Client rejected: connection limit reached\n", stderr);
-            close(fd);
+            close(fd); /* Ownership was never transferred. */
             continue;
         }
         struct epoll_event interest = {0};
         interest.events = EPOLLIN | EPOLLRDHUP; /* Level-triggered. */
-        interest.data.fd = fd;
+        interest.data.u64 = client->token;
         if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &interest) < 0) {
             perror("epoll_ctl ADD client");
-            close(fd);
+            connection_release(registry, client);
             return -1;
         }
-        clients[slot] = fd;
-        char ip[INET_ADDRSTRLEN] = {0};
+        char ip[INET_ADDRSTRLEN];
         if (inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip)) == NULL) {
-            strncpy(ip, "unknown", sizeof(ip) - 1);
+            snprintf(ip, sizeof(ip), "unknown");
         }
         printf("Client accepted: %s:%u (fd=%d)\n", ip,
                (unsigned)ntohs(peer.sin_port), fd);
+        printf("Connection token=%llu; active=%zu\n",
+               (unsigned long long)client->token, registry->active);
     }
 }
 
-static void read_ready_client(int epfd, int clients[MAX_CLIENTS], int fd)
+static void read_ready_client(int epfd, ConnectionRegistry *registry,
+                              Connection *client)
 {
     char buffer[4096];
     size_t received = 0;
     bool should_close = false;
     while (received < READ_BUDGET) {
-        ssize_t n = recv(fd, buffer, sizeof(buffer), 0);
+        ssize_t n = recv(client->fd, buffer, sizeof(buffer), 0);
         if (n > 0) {
             received += (size_t)n;
+            client->bytes_read += (uint64_t)n;
         } else if (n == 0) {
             should_close = true; /* EOF, not EAGAIN. */
             break;
@@ -148,14 +138,16 @@ static void read_ready_client(int epfd, int clients[MAX_CLIENTS], int fd)
             break;
         }
     }
-    if (received != 0) printf("Client fd=%d received %zu bytes\n", fd, received);
-    if (should_close) close_client(epfd, clients, fd);
+    if (received != 0) {
+        printf("Client fd=%d received %zu bytes\n", client->fd, received);
+    }
+    if (should_close) close_client(epfd, registry, client);
 }
 
 int run_epoll_server(unsigned short port)
 {
-    int clients[MAX_CLIENTS];
-    for (int i = 0; i < MAX_CLIENTS; ++i) clients[i] = -1;
+    ConnectionRegistry registry;
+    connection_registry_init(&registry);
     stop_requested = 0;
     if (install_signal_handlers() < 0) return 1;
 
@@ -169,7 +161,7 @@ int run_epoll_server(unsigned short port)
     }
     struct epoll_event interest = {0};
     interest.events = EPOLLIN;
-    interest.data.fd = listener;
+    interest.data.u64 = LISTENER_TOKEN;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, listener, &interest) < 0) {
         perror("epoll_ctl ADD listener");
         close(epfd);
@@ -177,8 +169,6 @@ int run_epoll_server(unsigned short port)
         return 1;
     }
 
-    /* Flush lines so a second terminal and the Python integration test can
-     * observe acceptance/readiness without waiting for process exit. */
     setvbuf(stdout, NULL, _IOLBF, 0);
     printf("epoll TCP server listening on 127.0.0.1:%u\n", (unsigned)port);
     int rc = 0;
@@ -192,24 +182,24 @@ int run_epoll_server(unsigned short port)
             break;
         }
         for (int i = 0; i < count && !stop_requested; ++i) {
-            int fd = events[i].data.fd;
-            if (fd == listener) {
-                if (accept_ready_clients(epfd, listener, clients) < 0) {
+            uint64_t token = events[i].data.u64;
+            if (token == LISTENER_TOKEN) {
+                if (accept_ready_clients(epfd, listener, &registry) < 0) {
                     rc = 1;
                     stop_requested = 1;
                     break;
                 }
             } else {
-                /* A readable client may also carry RDHUP; recv() drains
-                 * any remaining data and detects EOF correctly. */
-                read_ready_client(epfd, clients, fd);
+                Connection *client = connection_lookup(&registry, token);
+                if (client != NULL) {
+                    /* Old tokens cannot refer to a reused slot or fd. */
+                    read_ready_client(epfd, &registry, client);
+                }
             }
         }
     }
 
-    for (int i = 0; i < MAX_CLIENTS; ++i) {
-        if (clients[i] != -1) close(clients[i]);
-    }
+    connection_registry_close_all(&registry);
     close(listener);
     close(epfd);
     puts("epoll TCP server stopped");

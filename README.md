@@ -298,3 +298,29 @@ Phase 19 tracks live client fds in a fixed 128-slot array, and Phase 20 will
 introduce explicit per-connection structures. There is no application reply,
 TLS, backend routing, or persistent traffic buffer yet. Educational only,
 loopback-only; not production ready. Personal learning PDF is outside Git.
+
+## Phase 20: per-connection lifecycle and epoll tokens
+
+The standalone `--epoll-server PORT` now tracks accepted sockets through
+`ConnectionRegistry` (`include/connection.h`, `src/connection.c`) instead of
+parallel/flat file descriptor bookkeeping. Each `Connection` owns its socket
+**only after successful registration**, stores its peer IPv4 address, tracks
+received bytes, and moves from `CONN_UNUSED` to `CONN_OPEN` and back.
+
+`epoll_event.data.u64` stores a generation-and-slot token rather than a raw
+fd or pointer. Slot zero is reserved for the listener token. Old tokens are
+ignored after slot reuse, avoiding accidental dispatch of a queued event for
+a connection that has already been closed. The registry supports at most
+128 simultaneous clients and explicitly releases all sockets on shutdown.
+
+```bash
+make clean && make && make test
+python3 tests/test_connection_registry.py
+./build/tls-gateway --epoll-server 18082
+```
+
+You will see accepted-client tokens, per-client byte totals and an active
+connection count. This mode still **receives and discards** TCP data; it has
+no TLS handshake, upstream forwarding, response buffers, or HTTP processing.
+The blocking `--tls-proxy` from Phase 15 is unchanged. The personal learning
+PDF must remain outside the repository.
