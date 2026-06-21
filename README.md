@@ -324,3 +324,34 @@ connection count. This mode still **receives and discards** TCP data; it has
 no TLS handshake, upstream forwarding, response buffers, or HTTP processing.
 The blocking `--tls-proxy` from Phase 15 is unchanged. The personal learning
 PDF must remain outside the repository.
+
+## Phase 21: event-driven TLS 1.3 handshake (no HTTP yet)
+
+The new `--epoll-tls CERT KEY PORT` command creates one shared server-side
+`SSL_CTX`, accepts non-blocking loopback clients, and drives `SSL_accept()` from
+`epoll_wait()` events. `SSL_ERROR_WANT_READ` waits for `EPOLLIN` and
+`SSL_ERROR_WANT_WRITE` waits for `EPOLLOUT`. Each client owns an `SSL` object,
+while the Phase 20 connection registry tracks sockets and guards against
+stale event tokens. Handshakes time out after 10 seconds. `SIGPIPE` is ignored
+so a client disconnect during `close_notify` cannot kill the server.
+
+```bash
+make clean && make && make test
+make certs  # only if certs/ does not already exist
+./build/tls-gateway --epoll-tls certs/server.crt certs/server.key 18444
+# From another terminal:
+openssl s_client -tls1_3 -connect 127.0.0.1:18444 \
+  -servername localhost -CAfile certs/ca.crt \
+  -verify_hostname localhost -verify_return_error </dev/null
+```
+
+This is a **handshake-only diagnostic**: on success the gateway attempts to
+send `close_notify`, closes the session, and returns to accepting clients.
+It will NOT respond to `curl` / HTTP. Phase 22 introduces asynchronous
+application-data reads; the blocking `--tls-proxy` command from Phase 15
+remains available and unchanged. The lesson PDF stays outside Git, and
+`certs/` remains ignored. No production hardening is claimed.
+
+Run `python3 tests/test_epoll_tls.py` to test 20 concurrent handshakes while
+one peer stalls, invalid ClientHello, TLS 1.2 refusal, client-side hostname
+verification and orderly shutdown using disposable certificates.

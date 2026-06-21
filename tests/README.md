@@ -88,3 +88,12 @@ unique generation tokens, capacity (128), and cleanup. It also runs the real
 `--epoll-server` with three overlapping clients, verifies independent byte
 totals and active counts, and reopens a client to check token uniqueness.
 `test_epoll_server.py` is retained as a Phase 19 regression test.
+
+## Phase 21: epoll-driven OpenSSL handshake
+
+`test_epoll_tls.py` uses only the Python standard library and disposable
+certificates. It checks trusted TLS 1.3, many concurrent clients with one
+incomplete ClientHello, plaintext/TLS 1.2 rejection, hostname verification,
+invalid configuration, port collision, and SIGTERM cleanup. No HTTP response
+is expected from `--epoll-tls`; the previous TLS proxy regression tests
+continue to validate HTTPS forwarding independently.
