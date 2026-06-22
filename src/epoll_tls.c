@@ -20,11 +20,15 @@
 #define MAX_EVENTS 32
 #define LISTENER_TOKEN UINT64_C(0)
 #define HANDSHAKE_TIMEOUT_SECONDS 10
+#define TLS_READ_CHUNK 4096
+/* Educational safety limit: keep a client from monopolizing this lab. */
+#define TLS_READ_LIMIT (64U * 1024U)
 
-/* A parallel TLS table preserves Phase 20's generic TCP registry API. */
+/* The shared Phase 20 registry owns fds; TLS sessions own SSL objects. */
 typedef struct {
-    SSL *ssl;              /* Owned here; freed before connection_release(). */
-    time_t started;
+    SSL *ssl;
+    time_t started;            /* Only used while the handshake is pending. */
+    bool established;          /* Handshake done, now reading application data. */
 } TlsSession;
 
 static volatile sig_atomic_t stop_requested;
@@ -42,7 +46,7 @@ static int configure_signals(void)
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGINT, &action, NULL) < 0 ||
         sigaction(SIGTERM, &action, NULL) < 0) return -1;
-    /* TLS close_notify may race a peer close; never let SIGPIPE kill us. */
+    /* A disconnected client must not terminate the event loop via SIGPIPE. */
     struct sigaction ignore = {0};
     ignore.sa_handler = SIG_IGN;
     sigemptyset(&ignore.sa_mask);
@@ -70,7 +74,7 @@ static int make_listener(unsigned short port)
 
 static size_t slot_for(const Connection *connection)
 {
-    /* The low 8 bits encode slot + 1; see connection.c. */
+    /* The low eight bits encode slot+1; see connection.c. */
     return (size_t)((connection->token & UINT64_C(255)) - 1);
 }
 
@@ -86,7 +90,8 @@ static void close_session(int epfd, ConnectionRegistry *registry,
     SSL_free(sessions[slot].ssl);
     sessions[slot].ssl = NULL;
     sessions[slot].started = 0;
-    connection_release(registry, connection); /* Owns close(fd). */
+    sessions[slot].established = false;
+    connection_release(registry, connection); /* Also closes the fd. */
 }
 
 static int change_interest(int epfd, const Connection *connection,
@@ -98,24 +103,86 @@ static int change_interest(int epfd, const Connection *connection,
     return epoll_ctl(epfd, EPOLL_CTL_MOD, connection->fd, &event);
 }
 
+/* Print bytes as hex, NOT as a NUL-terminated C string. Diagnostic only:
+ * do not log decrypted request contents in a production proxy. */
+static void log_read(int fd, const unsigned char *buffer, int length,
+                     uint64_t total)
+{
+    int sample = length < 12 ? length : 12;
+    printf("TLS application data: fd=%d bytes=%d total=%llu hex=",
+           fd, length, (unsigned long long)total);
+    for (int i = 0; i < sample; ++i) printf("%02x", buffer[i]);
+    putchar('\n');
+}
+
+/* Level-triggered epoll + SSL_read retries; never block for socket data. */
+static void advance_read(int epfd, ConnectionRegistry *registry,
+                         TlsSession sessions[CONNECTION_CAPACITY],
+                         Connection *connection)
+{
+    TlsSession *session = &sessions[slot_for(connection)];
+    for (;;) {
+        unsigned char buffer[TLS_READ_CHUNK];
+        size_t remaining = TLS_READ_LIMIT - connection->bytes_read;
+        size_t length = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        if (length == 0) {
+            printf("TLS read limit reached: fd=%d total=%llu\n",
+                   connection->fd, (unsigned long long)connection->bytes_read);
+            close_session(epfd, registry, sessions, connection);
+            return;
+        }
+        int result = SSL_read(session->ssl, buffer, (int)length);
+        if (result > 0) {
+            connection->bytes_read += (uint64_t)result;
+            log_read(connection->fd, buffer, result, connection->bytes_read);
+            /* Continue until WANT_READ/WANT_WRITE. This also drains bytes
+             * already decrypted and buffered inside OpenSSL's SSL object. */
+            continue;
+        }
+        /* Must be called immediately after the unsuccessful SSL_read(). */
+        int ssl_error = SSL_get_error(session->ssl, result);
+        if (ssl_error == SSL_ERROR_ZERO_RETURN) {
+            printf("TLS close_notify received: fd=%d total=%llu\n",
+                   connection->fd, (unsigned long long)connection->bytes_read);
+            (void)SSL_shutdown(session->ssl); /* Best effort, non-blocking. */
+            close_session(epfd, registry, sessions, connection);
+            return;
+        }
+        uint32_t wanted;
+        if (ssl_error == SSL_ERROR_WANT_READ) {
+            wanted = EPOLLIN;
+        } else if (ssl_error == SSL_ERROR_WANT_WRITE) {
+            wanted = EPOLLOUT;
+        } else {
+            fprintf(stderr, "TLS application read failed: fd=%d ssl_error=%d\n",
+                    connection->fd, ssl_error);
+            close_session(epfd, registry, sessions, connection);
+            return;
+        }
+        if (change_interest(epfd, connection, wanted) < 0) {
+            perror("epoll_ctl MOD TLS read");
+            close_session(epfd, registry, sessions, connection);
+        }
+        return;
+    }
+}
+
 static void advance_handshake(int epfd, ConnectionRegistry *registry,
                               TlsSession sessions[CONNECTION_CAPACITY],
                               Connection *connection)
 {
     TlsSession *session = &sessions[slot_for(connection)];
-    /* socket is non-blocking, so SSL_accept never waits for network input. */
     int result = SSL_accept(session->ssl);
     if (result == 1) {
+        session->established = true;
         printf("TLS 1.3 handshake complete: fd=%d %s / %s\n",
                connection->fd, SSL_get_version(session->ssl),
                SSL_get_cipher_name(session->ssl));
-        /* Handshake-only lab: no application data handling until Phase 22. */
-        (void)SSL_shutdown(session->ssl); /* Best-effort close_notify. */
-        close_session(epfd, registry, sessions, connection);
+        /* App data may already be buffered in OpenSSL after the handshake.
+         * Try SSL_read now instead of relying on a new epoll notification. */
+        advance_read(epfd, registry, sessions, connection);
         return;
     }
-
-    /* Must inspect result immediately, before any further OpenSSL operation. */
     int ssl_error = SSL_get_error(session->ssl, result);
     uint32_t wanted;
     if (ssl_error == SSL_ERROR_WANT_READ) {
@@ -148,7 +215,6 @@ static void accept_ready(int epfd, int listener, SSL_CTX *context,
             if (errno != EAGAIN && errno != EWOULDBLOCK) perror("accept4 TLS");
             return;
         }
-
         Connection *connection = connection_register(registry, fd, &peer);
         if (connection == NULL) {
             close(fd);
@@ -157,6 +223,7 @@ static void accept_ready(int epfd, int listener, SSL_CTX *context,
         TlsSession *session = &sessions[slot_for(connection)];
         session->ssl = SSL_new(context);
         session->started = time(NULL);
+        session->established = false;
         if (session->ssl == NULL || SSL_set_fd(session->ssl, fd) != 1) {
             close_session(epfd, registry, sessions, connection);
             continue;
@@ -172,7 +239,6 @@ static void accept_ready(int epfd, int listener, SSL_CTX *context,
         }
         printf("TLS client accepted: fd=%d token=%llu active=%zu\n",
                fd, (unsigned long long)connection->token, registry->active);
-        /* epoll_wait drives SSL_accept after socket readiness. */
     }
 }
 
@@ -183,7 +249,7 @@ static void expire_handshakes(int epfd, ConnectionRegistry *registry,
     if (now == (time_t)-1) return;
     for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) {
         Connection *connection = &registry->slots[i];
-        if (connection->state == CONN_UNUSED) continue;
+        if (connection->state == CONN_UNUSED || sessions[i].established) continue;
         if (sessions[i].started != (time_t)-1 &&
             now - sessions[i].started >= HANDSHAKE_TIMEOUT_SECONDS) {
             printf("TLS handshake timed out: fd=%d\n", connection->fd);
@@ -252,12 +318,16 @@ int run_epoll_tls(const char *certificate_path, const char *private_key_path,
             } else {
                 Connection *connection = connection_lookup(&registry, token);
                 if (connection == NULL) continue;
-                advance_handshake(epfd, &registry, sessions, connection);
+                TlsSession *session = &sessions[slot_for(connection)];
+                if (session->established) {
+                    advance_read(epfd, &registry, sessions, connection);
+                } else {
+                    advance_handshake(epfd, &registry, sessions, connection);
+                }
             }
         }
         expire_handshakes(epfd, &registry, sessions);
     }
-    /* SSL objects are freed first, then the registry closes their sockets. */
     for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) {
         SSL_free(sessions[i].ssl);
         sessions[i].ssl = NULL;

@@ -355,3 +355,34 @@ remains available and unchanged. The lesson PDF stays outside Git, and
 Run `python3 tests/test_epoll_tls.py` to test 20 concurrent handshakes while
 one peer stalls, invalid ClientHello, TLS 1.2 refusal, client-side hostname
 verification and orderly shutdown using disposable certificates.
+
+
+## Phase 22: non-blocking TLS application reads (no response yet)
+
+`--epoll-tls CERT KEY PORT` now keeps clients connected after a successful
+TLS 1.3 handshake. The existing `epoll` loop drives **`SSL_read()`** using
+`SSL_ERROR_WANT_READ` -> `EPOLLIN` and `SSL_ERROR_WANT_WRITE` -> `EPOLLOUT`.
+It drains TLS application data, logs a short hex preview with byte counts,
+and continues serving other clients. The preview is for an isolated training
+lab only: **do not log decrypted requests in production**. A per-client
+64-KiB read cap closes a connection to keep this exercise bounded. Clean
+TLS `close_notify`, abrupt disconnects, and incomplete handshakes release
+both the `SSL` object and the registry-owned socket. Phase 21's 10-second
+handshake timeout still applies only to clients that have not authenticated.
+
+```bash
+make clean && make
+python3 tests/test_epoll_tls_read.py
+make test
+make certs  # only if you have not generated local certificates
+./build/tls-gateway --epoll-tls certs/server.crt certs/server.key 18444
+# Second terminal (type some text, then Ctrl+D):
+openssl s_client -quiet -tls1_3 -connect 127.0.0.1:18444 \
+  -servername localhost -CAfile certs/ca.crt \
+  -verify_hostname localhost -verify_return_error
+```
+
+A client sees **no HTTP response**, because Phase 22 only receives data.
+Phase 23 introduces non-blocking forwarding and output buffers. The
+**Phase 15 blocking `--tls-proxy` still forwards HTTPS to the Python backend**.
+PDFs and certificates do not belong in the repository.

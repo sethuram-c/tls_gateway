@@ -72,6 +72,7 @@ test: $(TARGET)
 	python3 tests/test_epoll_server.py
 	python3 tests/test_connection_registry.py
 	python3 tests/test_epoll_tls.py
+	python3 tests/test_epoll_tls_read.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

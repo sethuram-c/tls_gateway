@@ -97,3 +97,16 @@ incomplete ClientHello, plaintext/TLS 1.2 rejection, hostname verification,
 invalid configuration, port collision, and SIGTERM cleanup. No HTTP response
 is expected from `--epoll-tls`; the previous TLS proxy regression tests
 continue to validate HTTPS forwarding independently.
+
+
+## Phase 22: non-blocking TLS read tests
+
+`python3 tests/test_epoll_tls_read.py` starts the event-driven C TLS listener
+with disposable CA/server certificates. It checks that a successful handshake
+stays open, split TLS records and binary payloads are read accurately, the
+per-client 64-KiB receive cap closes excessive traffic, a stalled handshake
+does not block active readers, and the process survives disconnects and stops
+on SIGTERM. The test uses only the Python standard library. The Phase 21
+handshake tests remain as regression coverage, but sessions now stay open
+until they receive TLS close_notify, disconnect, reach the read limit, or the
+process is stopped. No HTTP response is expected from `--epoll-tls` yet.
