@@ -110,3 +110,16 @@ on SIGTERM. The test uses only the Python standard library. The Phase 21
 handshake tests remain as regression coverage, but sessions now stay open
 until they receive TLS close_notify, disconnect, reach the read limit, or the
 process is stopped. No HTTP response is expected from `--epoll-tls` yet.
+
+
+## Phase 23: buffered SSL_write and backpressure
+
+`test_output_buffer.py` compiles and runs `tests/output_buffer_probe.c` with
+AddressSanitizer/UBSan, checking binary data, partial-consumption offsets,
+failed enqueues while a write is pending, queue reuse and capacity rejection.
+`test_epoll_tls_write.py` starts `--epoll-tls` using disposable certificates
+and verifies binary-safe TLS echo, record fragmentation, 20 concurrent TLS
+clients during a stalled handshake, a 48-KiB transfer with a slower reader,
+and SIGTERM cleanup. Phase 22's read regression now consumes echoed bytes
+before calling `unwrap()`, and drains echoes while checking the 64-KiB cap.
+All these tests require only Python's standard library on Fedora.

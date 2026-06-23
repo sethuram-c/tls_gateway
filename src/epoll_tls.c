@@ -2,6 +2,7 @@
 #include "epoll_tls.h"
 #include "connection.h"
 #include "socket_flags.h"
+#include "output_buffer.h"
 #include "tls_context.h"
 
 #include <arpa/inet.h>
@@ -20,7 +21,7 @@
 #define MAX_EVENTS 32
 #define LISTENER_TOKEN UINT64_C(0)
 #define HANDSHAKE_TIMEOUT_SECONDS 10
-#define TLS_READ_CHUNK 4096
+#define TLS_READ_CHUNK OUTPUT_BUFFER_CAPACITY
 /* Educational safety limit: keep a client from monopolizing this lab. */
 #define TLS_READ_LIMIT (64U * 1024U)
 
@@ -29,6 +30,7 @@ typedef struct {
     SSL *ssl;
     time_t started;            /* Only used while the handshake is pending. */
     bool established;          /* Handshake done, now reading application data. */
+    OutputBuffer output;       /* Echo one read chunk; pause reads until drained. */
 } TlsSession;
 
 static volatile sig_atomic_t stop_requested;
@@ -91,6 +93,7 @@ static void close_session(int epfd, ConnectionRegistry *registry,
     sessions[slot].ssl = NULL;
     sessions[slot].started = 0;
     sessions[slot].established = false;
+    output_buffer_init(&sessions[slot].output);
     connection_release(registry, connection); /* Also closes the fd. */
 }
 
@@ -115,45 +118,86 @@ static void log_read(int fd, const unsigned char *buffer, int length,
     putchar('\n');
 }
 
-/* Level-triggered epoll + SSL_read retries; never block for socket data. */
-static void advance_read(int epfd, ConnectionRegistry *registry,
-                         TlsSession sessions[CONNECTION_CAPACITY],
-                         Connection *connection)
+/* One TLS connection at a time inside this function, but no blocking calls.
+ * Prioritize draining the output buffer before reading more input: this is
+ * backpressure. SSL_write retries always use the SAME pointer and length.
+ * With a 64-KiB read cap, 40 iterations comfortably cover a full session. */
+static void advance_io(int epfd, ConnectionRegistry *registry,
+                       TlsSession sessions[CONNECTION_CAPACITY],
+                       Connection *connection)
 {
     TlsSession *session = &sessions[slot_for(connection)];
-    for (;;) {
-        unsigned char buffer[TLS_READ_CHUNK];
-        size_t remaining = TLS_READ_LIMIT - connection->bytes_read;
-        size_t length = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
-        if (length == 0) {
+    for (unsigned int step = 0; step < 40; ++step) {
+        size_t pending = output_buffer_pending(&session->output);
+        if (pending > 0) {
+            /* OpenSSL can request EPOLLIN even for an outgoing write. Never
+             * assume that WANT_WRITE is the only way a write can pause. */
+            int result = SSL_write(session->ssl,
+                                   output_buffer_data(&session->output),
+                                   (int)pending);
+            if (result > 0) {
+                if (output_buffer_consume(&session->output, (size_t)result) < 0) {
+                    close_session(epfd, registry, sessions, connection);
+                    return;
+                }
+                printf("TLS echoed: fd=%d bytes=%d queued=%zu\n",
+                       connection->fd, result,
+                       output_buffer_pending(&session->output));
+                continue;
+            }
+            int ssl_error = SSL_get_error(session->ssl, result);
+            uint32_t wanted;
+            if (ssl_error == SSL_ERROR_WANT_READ) wanted = EPOLLIN;
+            else if (ssl_error == SSL_ERROR_WANT_WRITE) wanted = EPOLLOUT;
+            else {
+                fprintf(stderr, "TLS write failed: fd=%d ssl_error=%d\n",
+                        connection->fd, ssl_error);
+                close_session(epfd, registry, sessions, connection);
+                return;
+            }
+            printf("TLS output backpressure: fd=%d pending=%zu\n",
+                   connection->fd, pending);
+            if (change_interest(epfd, connection, wanted) < 0) {
+                perror("epoll_ctl MOD TLS write");
+                close_session(epfd, registry, sessions, connection);
+            }
+            return;
+        }
+
+        if (connection->bytes_read == TLS_READ_LIMIT) {
             printf("TLS read limit reached: fd=%d total=%llu\n",
                    connection->fd, (unsigned long long)connection->bytes_read);
             close_session(epfd, registry, sessions, connection);
             return;
         }
-        int result = SSL_read(session->ssl, buffer, (int)length);
+
+        unsigned char buffer[TLS_READ_CHUNK];
+        size_t remaining = TLS_READ_LIMIT - connection->bytes_read;
+        size_t capacity = remaining < sizeof(buffer) ? remaining : sizeof(buffer);
+        int result = SSL_read(session->ssl, buffer, (int)capacity);
         if (result > 0) {
             connection->bytes_read += (uint64_t)result;
             log_read(connection->fd, buffer, result, connection->bytes_read);
-            /* Continue until WANT_READ/WANT_WRITE. This also drains bytes
-             * already decrypted and buffered inside OpenSSL's SSL object. */
+            /* No pending writes: safe to reuse the single-chunk buffer. */
+            if (output_buffer_enqueue(&session->output, buffer, (size_t)result) < 0) {
+                fputs("TLS output buffer capacity exceeded\n", stderr);
+                close_session(epfd, registry, sessions, connection);
+                return;
+            }
             continue;
         }
-        /* Must be called immediately after the unsuccessful SSL_read(). */
         int ssl_error = SSL_get_error(session->ssl, result);
         if (ssl_error == SSL_ERROR_ZERO_RETURN) {
             printf("TLS close_notify received: fd=%d total=%llu\n",
                    connection->fd, (unsigned long long)connection->bytes_read);
-            (void)SSL_shutdown(session->ssl); /* Best effort, non-blocking. */
+            (void)SSL_shutdown(session->ssl); /* Non-blocking best effort. */
             close_session(epfd, registry, sessions, connection);
             return;
         }
         uint32_t wanted;
-        if (ssl_error == SSL_ERROR_WANT_READ) {
-            wanted = EPOLLIN;
-        } else if (ssl_error == SSL_ERROR_WANT_WRITE) {
-            wanted = EPOLLOUT;
-        } else {
+        if (ssl_error == SSL_ERROR_WANT_READ) wanted = EPOLLIN;
+        else if (ssl_error == SSL_ERROR_WANT_WRITE) wanted = EPOLLOUT;
+        else {
             fprintf(stderr, "TLS application read failed: fd=%d ssl_error=%d\n",
                     connection->fd, ssl_error);
             close_session(epfd, registry, sessions, connection);
@@ -164,6 +208,15 @@ static void advance_read(int epfd, ConnectionRegistry *registry,
             close_session(epfd, registry, sessions, connection);
         }
         return;
+    }
+    /* Avoid spinning on EPOLLOUT when no work is pending. If OpenSSL
+     * already holds decrypted bytes, writable readiness schedules a retry. */
+    uint32_t next = EPOLLIN;
+    if (output_buffer_pending(&session->output) != 0 ||
+        SSL_pending(session->ssl) > 0) next |= EPOLLOUT;
+    if (change_interest(epfd, connection, next) < 0) {
+        perror("epoll_ctl MOD TLS fairness");
+        close_session(epfd, registry, sessions, connection);
     }
 }
 
@@ -180,7 +233,7 @@ static void advance_handshake(int epfd, ConnectionRegistry *registry,
                SSL_get_cipher_name(session->ssl));
         /* App data may already be buffered in OpenSSL after the handshake.
          * Try SSL_read now instead of relying on a new epoll notification. */
-        advance_read(epfd, registry, sessions, connection);
+        advance_io(epfd, registry, sessions, connection);
         return;
     }
     int ssl_error = SSL_get_error(session->ssl, result);
@@ -224,6 +277,7 @@ static void accept_ready(int epfd, int listener, SSL_CTX *context,
         session->ssl = SSL_new(context);
         session->started = time(NULL);
         session->established = false;
+        output_buffer_init(&session->output);
         if (session->ssl == NULL || SSL_set_fd(session->ssl, fd) != 1) {
             close_session(epfd, registry, sessions, connection);
             continue;
@@ -320,7 +374,7 @@ int run_epoll_tls(const char *certificate_path, const char *private_key_path,
                 if (connection == NULL) continue;
                 TlsSession *session = &sessions[slot_for(connection)];
                 if (session->established) {
-                    advance_read(epfd, &registry, sessions, connection);
+                    advance_io(epfd, &registry, sessions, connection);
                 } else {
                     advance_handshake(epfd, &registry, sessions, connection);
                 }

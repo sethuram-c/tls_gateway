@@ -386,3 +386,35 @@ A client sees **no HTTP response**, because Phase 22 only receives data.
 Phase 23 introduces non-blocking forwarding and output buffers. The
 **Phase 15 blocking `--tls-proxy` still forwards HTTPS to the Python backend**.
 PDFs and certificates do not belong in the repository.
+
+
+## Phase 23: bounded buffered TLS writes (echo lab)
+
+`--epoll-tls CERT KEY PORT` now **echoes** decrypted TLS bytes back to the
+client using non-blocking `SSL_write()`. `src/output_buffer.c` provides a
+fixed-size **4 KiB** output queue *per client*. The event loop stops reading
+that client when an output chunk is queued, so a slow receiver cannot trigger
+unbounded buffering. On `SSL_ERROR_WANT_WRITE`, it waits for `EPOLLOUT`; on
+`SSL_ERROR_WANT_READ`, it waits for `EPOLLIN`, then retries the **same**
+`SSL_write` data pointer and length. Successful short writes advance the
+queue's offset; a completed queue frees its storage for reuse.
+
+This is a diagnostic **TLS echo mode**, not an HTTP endpoint and not backend
+forwarding. `--tls-proxy` from Phase 15 still implements blocking HTTPS to
+Python-backend routing. Phase 24 will refine the event state machine and
+Phase 25 will add asynchronous backend connections.
+
+```bash
+make clean && make
+python3 tests/test_output_buffer.py
+python3 tests/test_epoll_tls_write.py
+make test
+make certs  # if your development certificates are not present
+./build/tls-gateway --epoll-tls certs/server.crt certs/server.key 18444
+# In another terminal:
+printf 'echo test\n' | openssl s_client -quiet -tls1_3 \
+  -connect 127.0.0.1:18444 -servername localhost \
+  -CAfile certs/ca.crt -verify_hostname localhost -verify_return_error
+```
+
+No certificate, private key, generated binary, or learning PDF belongs in Git.

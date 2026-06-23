@@ -73,9 +73,11 @@ def test_reads(certs):
             secured = open_tls(port, context)
             # A completed handshake no longer causes an immediate close.
             secured.sendall(b"\x00A\xff")
+            assert secured.recv(3) == b"\x00A\xff"
             wait_for(log, process,
                      lambda s: "bytes=3 total=3 hex=0041ff" in s)
             secured.sendall(b"hello")
+            assert secured.recv(5) == b"hello"
             wait_for(log, process,
                      lambda s: "bytes=5 total=8 hex=68656c6c6f" in s)
             assert process.poll() is None
@@ -110,11 +112,16 @@ def test_reads(certs):
             # rely on a particular number of SSL_read() calls or TCP packets.
             flood = open_tls(port, context)
             try:
-                try:
-                    flood.sendall(b"Z" * (66 * 1024))
-                except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
-                    pass  # The gateway may enforce the limit mid-send.
-                # Keep the TLS client open until all complete records are read.
+                # Alternate sends/receives: an echo service must not be forced
+                # to buffer 64 KiB in userspace while the client never reads.
+                for _ in range(16):
+                    flood.sendall(b"Z" * 4096)
+                    echoed = bytearray()
+                    while len(echoed) < 4096:
+                        block = flood.recv(4096 - len(echoed))
+                        assert block
+                        echoed.extend(block)
+                    assert echoed == b"Z" * 4096
                 wait_for(log, process,
                          lambda s: "TLS read limit reached:" in s and "total=65536" in s)
             finally:

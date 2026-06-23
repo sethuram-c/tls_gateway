@@ -2,7 +2,7 @@ CC := gcc
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -g
 CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
-OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/connection.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
+OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
 .PHONY: all test clean certs
 all: $(TARGET)
@@ -29,7 +29,10 @@ build/epoll_demo.o: src/epoll_demo.c include/epoll_demo.h include/socket_flags.h
 build/epoll_server.o: src/epoll_server.c include/epoll_server.h include/connection.h include/socket_flags.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-build/epoll_tls.o: src/epoll_tls.c include/epoll_tls.h include/connection.h include/socket_flags.h include/tls_context.h
+build/epoll_tls.o: src/epoll_tls.c include/epoll_tls.h include/connection.h include/socket_flags.h include/tls_context.h include/output_buffer.h
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/output_buffer.o: src/output_buffer.c include/output_buffer.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/connection.o: src/connection.c include/connection.h
@@ -73,6 +76,8 @@ test: $(TARGET)
 	python3 tests/test_connection_registry.py
 	python3 tests/test_epoll_tls.py
 	python3 tests/test_epoll_tls_read.py
+	python3 tests/test_output_buffer.py
+	python3 tests/test_epoll_tls_write.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

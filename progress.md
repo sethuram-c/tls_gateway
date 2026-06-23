@@ -24,3 +24,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 20 - Track per-client state and safe epoll connection lifecycle (2026-12-20)
 - [x] Phase 21 - Implement non-blocking TLS 1.3 handshakes using epoll (2026-12-21)
 - [x] Phase 22 - Keep TLS sessions open and read decrypted data via epoll (2026-12-22)
+- [x] Phase 23 - Bounded SSL_write output queue and TLS echo backpressure (2026-12-23)
