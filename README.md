@@ -418,3 +418,28 @@ printf 'echo test\n' | openssl s_client -quiet -tls1_3 \
 ```
 
 No certificate, private key, generated binary, or learning PDF belongs in Git.
+
+
+## Phase 24: explicit TLS connection state machine
+
+The standalone `--epoll-tls CERT KEY PORT` echo lab now uses a checked finite
+state machine: `UNUSED -> HANDSHAKING -> READING <-> WRITING -> CLOSING ->
+UNUSED`. A handshake failure can also go straight to `CLOSING`. `TLS_STATE_*`
+values describe which OpenSSL operation is active, **not** whether the socket
+is readable or writable. Either operation may require `EPOLLIN` or `EPOLLOUT`
+according to `SSL_get_error`. Each accepted client owns its `SSL` object and
+4-KiB output buffer; a registry token protects against stale epoll events.
+
+```bash
+make clean && make
+python3 tests/test_tls_state.py
+make test
+make certs  # only if missing
+./build/tls-gateway --epoll-tls certs/server.crt certs/server.key 18444
+```
+
+The server emits diagnostic `TLS state:` transition lines for this lab. It
+still echoes encrypted application data and closes at the 64-KiB read limit.
+The Phase 15 `--tls-proxy` (blocking HTTPS to Python-backend forwarding) is
+unchanged. Phase 25 adds asynchronous upstream connection handling. No PDF,
+certificate/private key, or generated binary belongs in Git.

@@ -123,3 +123,11 @@ clients during a stalled handshake, a 48-KiB transfer with a slower reader,
 and SIGTERM cleanup. Phase 22's read regression now consumes echoed bytes
 before calling `unwrap()`, and drains echoes while checking the 64-KiB cap.
 All these tests require only Python's standard library on Fedora.
+
+## Phase 24: TLS state machine
+
+`python3 tests/test_tls_state.py` compiles a separate C probe that validates
+legal/illegal transitions under UBSan, then runs the epoll TLS listener with
+disposable CA/server certs. It confirms state transitions for a trusted TLS
+handshake, echoed binary payload, clean `close_notify`, simultaneous stalled
+handshake, another client, and SIGTERM. Prior TLS echo tests remain active.
