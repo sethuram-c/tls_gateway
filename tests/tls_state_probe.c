@@ -16,6 +16,11 @@ int main(void)
     assert(!tls_state_move(&state, TLS_STATE_HANDSHAKING));
     assert(tls_state_move(&state, TLS_STATE_WRITING));
     assert(tls_state_move(&state, TLS_STATE_READING));
+    assert(tls_state_move(&state, TLS_STATE_BACKEND_CONNECTING));
+    assert(strcmp(tls_state_name(state), "BACKEND_CONNECTING") == 0);
+    assert(!tls_state_move(&state, TLS_STATE_READING));
+    assert(tls_state_move(&state, TLS_STATE_WRITING));
+    assert(tls_state_move(&state, TLS_STATE_READING));
     assert(tls_state_move(&state, TLS_STATE_CLOSING));
     assert(!tls_state_move(&state, TLS_STATE_WRITING));
     assert(tls_state_move(&state, TLS_STATE_UNUSED));

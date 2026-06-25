@@ -131,3 +131,14 @@ legal/illegal transitions under UBSan, then runs the epoll TLS listener with
 disposable CA/server certs. It confirms state transitions for a trusted TLS
 handshake, echoed binary payload, clean `close_notify`, simultaneous stalled
 handshake, another client, and SIGTERM. Prior TLS echo tests remain active.
+
+## Phase 25 - non-blocking upstream connection integration
+
+`python3 tests/test_epoll_backend.py` starts a temporary CA and server
+certificate, exercises the new `--epoll-tls-connect` mode, and asserts that:
+(1) TLS handshake by itself does not initiate an upstream connect;
+(2) an application-data chunk triggers a real accepted TCP connection;
+(3) the TLS client receives an echo after SO_ERROR confirms success;
+(4) 20 clients still progress while another has a partial ClientHello;
+(5) a refused backend is reported without taking down the gateway.
+The test is self-contained and requires no third-party Python modules.

@@ -21,7 +21,7 @@ Connection *connection_register(ConnectionRegistry *registry, int fd,
                                 const struct sockaddr_in *peer)
 {
     if (fd < 0 || peer == NULL || registry->next_generation == 0 ||
-        registry->next_generation > (UINT64_MAX >> SLOT_BITS)) {
+        registry->next_generation > (UINT64_MAX >> (SLOT_BITS + 1))) {
         return NULL;
     }
     for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) {

@@ -443,3 +443,42 @@ still echoes encrypted application data and closes at the 64-KiB read limit.
 The Phase 15 `--tls-proxy` (blocking HTTPS to Python-backend forwarding) is
 unchanged. Phase 25 adds asynchronous upstream connection handling. No PDF,
 certificate/private key, or generated binary belongs in Git.
+
+
+## Phase 25: non-blocking outbound backend connections
+
+The new **`--epoll-tls-connect CERT KEY TLS_PORT BACKEND_PORT`** diagnostic
+reuses the Phase 24 event-driven TLS echo server. On the first decrypted
+application-data chunk for each client, it makes a **non-blocking outbound
+TCP connection** to `127.0.0.1:BACKEND_PORT`. A connection in progress enters
+`BACKEND_CONNECTING`, is registered with `epoll`, and completes only after
+`getsockopt(SOL_SOCKET, SO_ERROR)` reports success. The first TLS chunk stays
+in the existing bounded 4-KiB output buffer while the connect is pending;
+client reading is paused. Completion (success or refusal) resumes the TLS
+echo. Rejected or timed-out outbound connections do not crash the listener.
+The generation-tagged epoll token protects against stale backend events,
+and upstream sockets are closed on client teardown.
+
+**This is a connection lab, not asynchronous HTTP forwarding.** It never
+sends the TLS data to the backend and never reads an upstream response. The
+existing `--tls-proxy` is still the working **blocking** HTTPS reverse proxy.
+The next development milestone will add full event-driven backend forwarding
+before moving on to SNI features.
+
+```bash
+make clean && make
+python3 tests/test_epoll_backend.py
+make test
+# In terminal 1:
+python3 tests/http_backend.py
+# In terminal 2:
+./build/tls-gateway --epoll-tls-connect \
+  certs/server.crt certs/server.key 18444 18081
+# Terminal 3: a verified TLS client; send a line and receive that same line.
+openssl s_client -quiet -tls1_3 -connect 127.0.0.1:18444 \
+  -servername localhost -CAfile certs/ca.crt \
+  -verify_hostname localhost -verify_return_error
+```
+
+The Python backend logs may show early EOF because Phase 25 only tests the
+TCP connection, not HTTP. The learning PDF is personal, outside Git.

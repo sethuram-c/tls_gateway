@@ -2,13 +2,13 @@ CC := gcc
 CFLAGS := -std=c17 -Wall -Wextra -Wpedantic -Werror -g
 CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
-OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/tls_state.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
+OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/tls_state.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/backend_async.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
 .PHONY: all test clean certs
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ -lssl -lcrypto
-build/main.o: src/main.c include/log.h include/socket_demo.h include/nonblock_demo.h include/epoll_demo.h include/epoll_server.h include/epoll_tls.h include/tcp_server.h include/backend_connect.h include/tcp_proxy.h include/tls_context.h include/tls_listener.h
+build/main.o: src/main.c include/log.h include/socket_demo.h include/nonblock_demo.h include/epoll_demo.h include/epoll_server.h include/epoll_tls.h include/tcp_server.h include/backend_async.h include/backend_connect.h include/tcp_proxy.h include/tls_context.h include/tls_listener.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/log.o: src/log.c include/log.h
@@ -29,7 +29,7 @@ build/epoll_demo.o: src/epoll_demo.c include/epoll_demo.h include/socket_flags.h
 build/epoll_server.o: src/epoll_server.c include/epoll_server.h include/connection.h include/socket_flags.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
-build/epoll_tls.o: src/epoll_tls.c include/epoll_tls.h include/connection.h include/socket_flags.h include/tls_context.h include/output_buffer.h include/tls_state.h
+build/epoll_tls.o: src/epoll_tls.c include/epoll_tls.h include/connection.h include/socket_flags.h include/tls_context.h include/output_buffer.h include/tls_state.h include/backend_async.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/tls_state.o: src/tls_state.c include/tls_state.h
@@ -45,6 +45,9 @@ build/tcp_server.o: src/tcp_server.c include/tcp_server.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/backend_connect.o: src/backend_connect.c include/backend_connect.h
+	@mkdir -p build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+build/backend_async.o: src/backend_async.c include/backend_async.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 build/tcp_proxy.o: src/tcp_proxy.c include/tcp_proxy.h
@@ -82,6 +85,7 @@ test: $(TARGET)
 	python3 tests/test_output_buffer.py
 	python3 tests/test_epoll_tls_write.py
 	python3 tests/test_tls_state.py
+	python3 tests/test_epoll_backend.py
 certs:
 	bash scripts/generate_dev_certs.sh
 clean:

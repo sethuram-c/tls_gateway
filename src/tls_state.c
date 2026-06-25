@@ -8,6 +8,7 @@ const char *tls_state_name(TlsState state)
     case TLS_STATE_HANDSHAKING: return "HANDSHAKING";
     case TLS_STATE_READING: return "READING";
     case TLS_STATE_WRITING: return "WRITING";
+    case TLS_STATE_BACKEND_CONNECTING: return "BACKEND_CONNECTING";
     case TLS_STATE_CLOSING: return "CLOSING";
     default: return "INVALID";
     }
@@ -25,6 +26,11 @@ bool tls_state_move(TlsState *state, TlsState next)
         allowed = next == TLS_STATE_READING || next == TLS_STATE_CLOSING;
         break;
     case TLS_STATE_READING:
+        allowed = next == TLS_STATE_WRITING ||
+                  next == TLS_STATE_BACKEND_CONNECTING ||
+                  next == TLS_STATE_CLOSING;
+        break;
+    case TLS_STATE_BACKEND_CONNECTING:
         allowed = next == TLS_STATE_WRITING || next == TLS_STATE_CLOSING;
         break;
     case TLS_STATE_WRITING:

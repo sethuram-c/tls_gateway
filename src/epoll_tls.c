@@ -5,6 +5,7 @@
 #include "output_buffer.h"
 #include "tls_context.h"
 #include "tls_state.h"
+#include "backend_async.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -25,6 +26,10 @@
 #define TLS_READ_CHUNK OUTPUT_BUFFER_CAPACITY
 /* Educational safety limit: keep a client from monopolizing this lab. */
 #define TLS_READ_LIMIT (64U * 1024U)
+#define BACKEND_CONNECT_TIMEOUT_SECONDS 5
+/* Slot values 1..128 identify client sockets, 129..256 (mod 256) are
+ * problematic; instead use the highest token bit to distinguish upstream. */
+#define BACKEND_TOKEN_BIT (UINT64_C(1) << 63)
 
 /* The shared Phase 20 registry owns fds; TLS sessions own SSL objects. */
 typedef struct {
@@ -32,6 +37,9 @@ typedef struct {
     time_t started;            /* Only used while the handshake is pending. */
     TlsState state;            /* HANDSHAKING / READING / WRITING / CLOSING. */
     OutputBuffer output;       /* Echo one read chunk; pause reads until drained. */
+    int backend_fd;            /* -1 unless an outbound connect is pending. */
+    bool backend_attempted;    /* One upstream attempt per TLS session. */
+    time_t backend_started;
 } TlsSession;
 
 static volatile sig_atomic_t stop_requested;
@@ -110,6 +118,13 @@ static void close_session(int epfd, ConnectionRegistry *registry,
         session->state != TLS_STATE_CLOSING) {
         (void)transition_session(session, fd, TLS_STATE_CLOSING);
     }
+    if (session->backend_fd >= 0) {
+        (void)epoll_ctl(epfd, EPOLL_CTL_DEL, session->backend_fd, NULL);
+        close(session->backend_fd);
+        session->backend_fd = -1;
+    }
+    session->backend_attempted = false;
+    session->backend_started = 0;
     SSL_free(session->ssl);
     session->ssl = NULL;
     session->started = 0;
@@ -127,6 +142,74 @@ static int change_interest(int epfd, const Connection *connection,
     event.data.u64 = connection->token;
     event.events = event_mask | EPOLLRDHUP;
     return epoll_ctl(epfd, EPOLL_CTL_MOD, connection->fd, &event);
+}
+
+/* A failed upstream is logged and the lab resumes TLS echo. We are not
+ * sending HTTP to that upstream until Phase 26. */
+static bool finish_backend_attempt(int epfd, ConnectionRegistry *registry,
+                                   TlsSession sessions[CONNECTION_CAPACITY],
+                                   Connection *connection, bool connected)
+{
+    TlsSession *session = &sessions[slot_for(connection)];
+    if (session->backend_fd >= 0) {
+        (void)epoll_ctl(epfd, EPOLL_CTL_DEL, session->backend_fd, NULL);
+        close(session->backend_fd);
+        session->backend_fd = -1;
+    }
+    session->backend_started = 0;
+    printf("Upstream connect %s: client_fd=%d\n",
+           connected ? "succeeded" : "failed", connection->fd);
+    if (!transition_session(session, connection->fd, TLS_STATE_WRITING)) {
+        close_session(epfd, registry, sessions, connection);
+        return false;
+    }
+    /* The TLS socket was temporarily parked while connecting upstream. */
+    if (change_interest(epfd, connection, EPOLLOUT) < 0) {
+        perror("epoll_ctl MOD resume TLS write");
+        close_session(epfd, registry, sessions, connection);
+        return false;
+    }
+    return true;
+}
+
+static bool start_backend_attempt(int epfd, ConnectionRegistry *registry,
+                                  TlsSession sessions[CONNECTION_CAPACITY],
+                                  Connection *connection, unsigned short port)
+{
+    TlsSession *session = &sessions[slot_for(connection)];
+    session->backend_attempted = true;
+    if (!transition_session(session, connection->fd,
+                            TLS_STATE_BACKEND_CONNECTING)) {
+        close_session(epfd, registry, sessions, connection);
+        return false;
+    }
+    int fd = -1;
+    int result = backend_async_start(port, &fd);
+    if (result < 0) {
+        printf("Upstream connect error: %s\n", strerror(errno));
+        return finish_backend_attempt(epfd, registry, sessions, connection, false);
+    }
+    session->backend_fd = fd;
+    printf("Upstream connect initiated: client_fd=%d backend_fd=%d port=%u\n",
+           connection->fd, fd, port);
+    if (result == 1) {
+        return finish_backend_attempt(epfd, registry, sessions, connection, true);
+    }
+    struct epoll_event upstream = {0};
+    upstream.events = EPOLLOUT | EPOLLERR | EPOLLHUP;
+    upstream.data.u64 = connection->token | BACKEND_TOKEN_BIT;
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &upstream) < 0) {
+        perror("epoll_ctl ADD upstream");
+        return finish_backend_attempt(epfd, registry, sessions, connection, false);
+    }
+    session->backend_started = time(NULL);
+    /* Do not spin on readable client data while connect is pending. */
+    if (change_interest(epfd, connection, 0) < 0) {
+        perror("epoll_ctl MOD park client");
+        close_session(epfd, registry, sessions, connection);
+        return false;
+    }
+    return true;
 }
 
 /* Print bytes as hex, NOT as a NUL-terminated C string. Diagnostic only:
@@ -147,7 +230,7 @@ static void log_read(int fd, const unsigned char *buffer, int length,
  * of transitions per dispatch protects event-loop fairness. */
 static void advance_io(int epfd, ConnectionRegistry *registry,
                        TlsSession sessions[CONNECTION_CAPACITY],
-                       Connection *connection)
+                       Connection *connection, unsigned short backend_port)
 {
     TlsSession *session = &sessions[slot_for(connection)];
     for (unsigned int step = 0; step < 40; ++step) {
@@ -225,6 +308,11 @@ static void advance_io(int epfd, ConnectionRegistry *registry,
                 close_session(epfd, registry, sessions, connection);
                 return;
             }
+            if (backend_port != 0 && !session->backend_attempted) {
+                (void)start_backend_attempt(epfd, registry, sessions,
+                                            connection, backend_port);
+                return;
+            }
             if (!transition_session(session, connection->fd,
                                     TLS_STATE_WRITING)) {
                 close_session(epfd, registry, sessions, connection);
@@ -268,7 +356,7 @@ static void advance_io(int epfd, ConnectionRegistry *registry,
 
 static void advance_handshake(int epfd, ConnectionRegistry *registry,
                               TlsSession sessions[CONNECTION_CAPACITY],
-                              Connection *connection)
+                              Connection *connection, unsigned short backend_port)
 {
     TlsSession *session = &sessions[slot_for(connection)];
     int result = SSL_accept(session->ssl);
@@ -282,7 +370,7 @@ static void advance_handshake(int epfd, ConnectionRegistry *registry,
                SSL_get_cipher_name(session->ssl));
         /* App data may already be buffered in OpenSSL after the handshake.
          * Try SSL_read now instead of relying on a new epoll notification. */
-        advance_io(epfd, registry, sessions, connection);
+        advance_io(epfd, registry, sessions, connection, backend_port);
         return;
     }
     int ssl_error = SSL_get_error(session->ssl, result);
@@ -325,6 +413,9 @@ static void accept_ready(int epfd, int listener, SSL_CTX *context,
         TlsSession *session = &sessions[slot_for(connection)];
         session->ssl = SSL_new(context);
         session->started = time(NULL);
+        session->backend_fd = -1;
+        session->backend_attempted = false;
+        session->backend_started = 0;
         output_buffer_init(&session->output);
         if (!transition_session(session, fd, TLS_STATE_HANDSHAKING)) {
             SSL_free(session->ssl);
@@ -367,8 +458,27 @@ static void expire_handshakes(int epfd, ConnectionRegistry *registry,
     }
 }
 
-int run_epoll_tls(const char *certificate_path, const char *private_key_path,
-                  unsigned short port)
+static void expire_backend_connects(int epfd, ConnectionRegistry *registry,
+                                    TlsSession sessions[CONNECTION_CAPACITY])
+{
+    time_t now = time(NULL);
+    if (now == (time_t)-1) return;
+    for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) {
+        Connection *connection = &registry->slots[i];
+        TlsSession *session = &sessions[i];
+        if (connection->state != CONN_OPEN ||
+            session->state != TLS_STATE_BACKEND_CONNECTING) continue;
+        if (session->backend_started != (time_t)-1 &&
+            now - session->backend_started >= BACKEND_CONNECT_TIMEOUT_SECONDS) {
+            printf("Upstream connect timed out: client_fd=%d\n", connection->fd);
+            (void)finish_backend_attempt(epfd, registry, sessions, connection, false);
+        }
+    }
+}
+
+int run_epoll_tls_with_backend(const char *certificate_path,
+                               const char *private_key_path,
+                               unsigned short port, unsigned short backend_port)
 {
     SSL_CTX *context = tls_server_context_new(certificate_path, private_key_path);
     if (context == NULL) {
@@ -408,8 +518,12 @@ int run_epoll_tls(const char *certificate_path, const char *private_key_path,
     ConnectionRegistry registry;
     connection_registry_init(&registry);
     TlsSession sessions[CONNECTION_CAPACITY] = {{0}};
+    for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) sessions[i].backend_fd = -1;
     setvbuf(stdout, NULL, _IOLBF, 0);
     printf("epoll TLS listener ready on 127.0.0.1:%u (TLS 1.3)\n", port);
+    if (backend_port != 0)
+        printf("Non-blocking upstream connection lab enabled: 127.0.0.1:%u\n",
+               backend_port);
     int status = 0;
     while (!stop_requested) {
         struct epoll_event events[MAX_EVENTS];
@@ -425,16 +539,36 @@ int run_epoll_tls(const char *certificate_path, const char *private_key_path,
             if (token == LISTENER_TOKEN) {
                 accept_ready(epfd, listener, context, &registry, sessions);
             } else {
-                Connection *connection = connection_lookup(&registry, token);
+                bool upstream = (token & BACKEND_TOKEN_BIT) != 0;
+                Connection *connection = connection_lookup(
+                    &registry, token & ~BACKEND_TOKEN_BIT);
                 if (connection == NULL) continue;
                 TlsSession *session = &sessions[slot_for(connection)];
+                if (upstream) {
+                    if (session->state != TLS_STATE_BACKEND_CONNECTING ||
+                        session->backend_fd < 0) continue;
+                    int ready = backend_async_complete(session->backend_fd);
+                    if (ready < 0)
+                        printf("Upstream SO_ERROR: %s\n", strerror(errno));
+                    if (finish_backend_attempt(epfd, &registry, sessions,
+                                               connection, ready == 0))
+                        advance_io(epfd, &registry, sessions, connection,
+                                   backend_port);
+                    continue;
+                }
+                if (session->state == TLS_STATE_BACKEND_CONNECTING) {
+                    /* An active client closing while connect is pending. */
+                    if (events[i].events & (EPOLLHUP | EPOLLERR | EPOLLRDHUP))
+                        close_session(epfd, &registry, sessions, connection);
+                    continue;
+                }
                 switch (session->state) {
                 case TLS_STATE_HANDSHAKING:
-                    advance_handshake(epfd, &registry, sessions, connection);
+                    advance_handshake(epfd, &registry, sessions, connection, backend_port);
                     break;
                 case TLS_STATE_READING:
                 case TLS_STATE_WRITING:
-                    advance_io(epfd, &registry, sessions, connection);
+                    advance_io(epfd, &registry, sessions, connection, backend_port);
                     break;
                 case TLS_STATE_CLOSING:
                 case TLS_STATE_UNUSED:
@@ -445,8 +579,10 @@ int run_epoll_tls(const char *certificate_path, const char *private_key_path,
             }
         }
         expire_handshakes(epfd, &registry, sessions);
+        expire_backend_connects(epfd, &registry, sessions);
     }
     for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) {
+        if (sessions[i].backend_fd >= 0) close(sessions[i].backend_fd);
         SSL_free(sessions[i].ssl);
         sessions[i].ssl = NULL;
     }
@@ -456,4 +592,11 @@ int run_epoll_tls(const char *certificate_path, const char *private_key_path,
     SSL_CTX_free(context);
     puts("epoll TLS listener stopped");
     return status;
+}
+
+/* The original TLS echo lab behaves identically when no backend is chosen. */
+int run_epoll_tls(const char *certificate_path, const char *private_key_path,
+                  unsigned short port)
+{
+    return run_epoll_tls_with_backend(certificate_path, private_key_path, port, 0);
 }
