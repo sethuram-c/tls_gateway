@@ -27,3 +27,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 23 - Bounded SSL_write output queue and TLS echo backpressure (2026-12-23)
 - [x] Phase 24 - Explicit TLS connection states and transition validation (2026-12-24)
 - [x] Phase 25 - Non-blocking backend connect with epoll and SO_ERROR (2026-12-25)
+- [x] Phase 26 - Event-driven TLS termination and non-blocking HTTP forwarding (2026-12-26)

@@ -15,6 +15,8 @@ class BackendHandler(BaseHTTPRequestHandler):
             body, status = b"ok\n", 200
         elif self.path == "/":
             body, status = b"hello from python backend\n", 200
+        elif self.path == "/large":
+            body, status = b"x" * (64 * 1024), 200
         else:
             body, status = b"not found\n", 404
         self.send_response(status)

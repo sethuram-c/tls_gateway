@@ -142,3 +142,11 @@ certificate, exercises the new `--epoll-tls-connect` mode, and asserts that:
 (4) 20 clients still progress while another has a partial ClientHello;
 (5) a refused backend is reported without taking down the gateway.
 The test is self-contained and requires no third-party Python modules.
+
+### Phase 26: epoll TLS reverse proxy
+
+`python3 tests/test_epoll_tls_proxy.py` starts a real local TLS 1.3 gateway
+and Python HTTP backend on temporary ports. Checks 200/404/502, fragmented
+requests, explicit `Connection: close`, 64-KiB response streaming, 20
+concurrent TLS clients alongside a stalled handshake, TLS 1.2 rejection,
+and invalid CLI arguments. No installed Python packages are needed.

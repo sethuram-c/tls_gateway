@@ -5,6 +5,7 @@
 #include "epoll_demo.h"
 #include "epoll_server.h"
 #include "epoll_tls.h"
+#include "epoll_tls_proxy.h"
 #include "socket_demo.h"
 #include "tcp_server.h"
 #include "tls_context.h"
@@ -16,7 +17,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --nonblock-demo | --epoll-demo | --epoll-server PORT | --epoll-tls CERT KEY PORT | --epoll-tls-connect CERT KEY TLS_PORT BACKEND_PORT | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --nonblock-demo | --epoll-demo | --epoll-server PORT | --epoll-tls CERT KEY PORT | --epoll-tls-connect CERT KEY TLS_PORT BACKEND_PORT | --epoll-tls-proxy CERT KEY TLS_PORT BACKEND_PORT | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -58,6 +59,16 @@ int main(int argc, char *argv[])
             return 2;
         }
         return run_epoll_tls(argv[2], argv[3], port);
+    }
+    if (argc == 6 && strcmp(argv[1], "--epoll-tls-proxy") == 0) {
+        unsigned short listen_port, backend_port;
+        if (parse_port(argv[4], &listen_port) < 0 ||
+            parse_port(argv[5], &backend_port) < 0 ||
+            listen_port == backend_port) {
+            fputs("invalid epoll TLS proxy ports (1..65535, must differ)\n", stderr);
+            return 2;
+        }
+        return run_epoll_tls_proxy(argv[2], argv[3], listen_port, backend_port);
     }
     if (argc == 6 && strcmp(argv[1], "--epoll-tls-connect") == 0) {
         unsigned short listen_port, backend_port;

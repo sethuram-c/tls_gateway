@@ -482,3 +482,43 @@ openssl s_client -quiet -tls1_3 -connect 127.0.0.1:18444 \
 
 The Python backend logs may show early EOF because Phase 25 only tests the
 TCP connection, not HTTP. The learning PDF is personal, outside Git.
+
+## Phase 26: event-driven HTTPS -> HTTP backend forwarding
+
+`--epoll-tls-proxy CERT KEY TLS_PORT BACKEND_PORT` implements the first full
+**non-blocking TLS termination proxy**. A single Linux `epoll` loop manages
+per-client `SSL_accept()`/`SSL_read()`/`SSL_write()` and non-blocking backend
+`connect()`/`send()`/`recv()`. The upstream is plaintext loopback HTTP.
+No thread is created per connection. The legacy Phase 15 `--tls-proxy`
+(blocking) and Phase 25 `--epoll-tls-connect` (echo/connect lab) are unchanged.
+
+Example on Fedora, using local development certificates:
+
+```bash
+make clean && make && make test
+make certs  # only once, if certs/ is missing
+# Terminal 1
+python3 tests/http_backend.py
+# Terminal 2
+./build/tls-gateway --epoll-tls-proxy \
+  certs/server.crt certs/server.key 18444 18081
+# Terminal 3
+curl -i --cacert certs/ca.crt https://localhost:18444/health
+curl -i --cacert certs/ca.crt https://localhost:18444/large -o /dev/null
+```
+
+**Deliberate learning limits:** HTTP/1.1 `GET` only, one request per client
+connection, maximum 8 KiB request headers, no request bodies/pipelining,
+`Connection: close` required on upstream responses, loopback networking,
+128 tracked connections, basic 15-second idle timeout, no mTLS/SNI yet.
+The proxy accepts an absent Connection header (adds `Connection: close`) or
+an explicit `Connection: close`; other Connection values get HTTP 400.
+Upstream responses are streamed with an 8 KiB buffer; the proxy stops
+reading upstream while the current TLS output chunk is pending. A refused
+upstream connection produces HTTPS 502. It is **not production-ready**:
+advanced HTTP framing, request-body streaming, graceful draining, multi-host
+routing, comprehensive limits, and robust TLS shutdown are future work.
+
+Run just this phase's integration test:
+`python3 tests/test_epoll_tls_proxy.py`.
+Generated certificates and learning PDFs must never be committed.
