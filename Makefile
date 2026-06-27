@@ -4,7 +4,7 @@ CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
 OBJECTS := build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/epoll_tls_proxy.o build/tls_state.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/backend_async.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
-.PHONY: all test clean certs
+.PHONY: all test clean certs certs-sni
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ -lssl -lcrypto
@@ -90,7 +90,10 @@ test: $(TARGET)
 	python3 tests/test_tls_state.py
 	python3 tests/test_epoll_backend.py
 	python3 tests/test_epoll_tls_proxy.py
+	python3 tests/test_sni_observation.py
 certs:
 	bash scripts/generate_dev_certs.sh
+certs-sni:
+	bash scripts/generate_sni_cert.sh
 clean:
 	rm -rf build

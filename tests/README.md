@@ -150,3 +150,12 @@ and Python HTTP backend on temporary ports. Checks 200/404/502, fragmented
 requests, explicit `Connection: close`, 64-KiB response streaming, 20
 concurrent TLS clients alongside a stalled handshake, TLS 1.2 rejection,
 and invalid CLI arguments. No installed Python packages are needed.
+
+### Phase 27: SNI observation (certificate selection comes next)
+
+`python3 tests/test_sni_observation.py` creates a disposable CA and two server
+certificates (`localhost`, `api.test`) and checks their SANs. It verifies that
+`--epoll-tls-proxy` logs the client-requested SNI but still uses the default
+`localhost` certificate. In particular, a verified `api.test` connection must
+fail hostname verification until Phase 28's certificate selection is added.
+No files from this test are committed, and no global CA trust is changed.

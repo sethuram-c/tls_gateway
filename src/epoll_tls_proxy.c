@@ -218,6 +218,31 @@ static bool open_upstream(int epfd, Connection *c, ProxySession *s,
     return client_interest(epfd, c, 0);
 }
 
+/* Phase 27: observe the requested SNI, without selecting another cert.
+ * Treat SNI as untrusted input; log only safe printable hostname characters.
+ * SNI is sent in ClientHello and is not an HTTP Host header. */
+static void log_requested_sni(const SSL *ssl)
+{
+    const char *raw = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
+    if (raw == NULL || *raw == '\0') {
+        puts("TLS client SNI: (none)");
+        return;
+    }
+    char safe[256];
+    size_t i = 0;
+    for (; raw[i] != '\0' && i < sizeof(safe) - 1; ++i) {
+        unsigned char ch = (unsigned char)raw[i];
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') || ch == '.' || ch == '-') {
+            safe[i] = (char)ch;
+        } else {
+            safe[i] = '?';
+        }
+    }
+    safe[i] = '\0';
+    printf("TLS client SNI: %s (default certificate; no SNI selection yet)\n", safe);
+}
+
 static bool tls_step(int epfd, Connection *c, ProxySession *s,
                      unsigned short backend_port)
 {
@@ -226,6 +251,7 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
         int n = SSL_accept(s->ssl);
         if (n == 1) {
             s->stage = P_REQUEST;
+            log_requested_sni(s->ssl);
             printf("Non-blocking TLS handshake complete: fd=%d\n", c->fd);
         } else {
             int err = SSL_get_error(s->ssl, n);

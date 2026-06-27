@@ -522,3 +522,37 @@ routing, comprehensive limits, and robust TLS shutdown are future work.
 Run just this phase's integration test:
 `python3 tests/test_epoll_tls_proxy.py`.
 Generated certificates and learning PDFs must never be committed.
+
+## Phase 27: learn SNI and issue an alternate development certificate
+
+**SNI (Server Name Indication)** is the requested TLS hostname sent in the
+ClientHello, before the server chooses its certificate. It is distinct from
+the later HTTP `Host` header and is **not proof of client identity**.
+`--epoll-tls-proxy` now observes/logs SNI after successful handshakes; it
+**still serves only the default `localhost` certificate**, irrespective of SNI.
+Selecting certificates will be added in Phase 28.
+
+```bash
+make certs       # once, only if certs/ does not exist
+make certs-sni   # issue api.test.crt + api.test.key using the existing local CA
+openssl verify -CAfile certs/ca.crt -purpose sslserver \
+  -verify_hostname api.test certs/api.test.crt
+python3 tests/test_sni_observation.py
+```
+
+For a live experiment, start the Python backend and the epoll TLS proxy as in
+Phase 26, then run:
+
+```bash
+# The default localhost cert is still returned, even when SNI=api.test.
+openssl s_client -tls1_3 -connect 127.0.0.1:18444 \
+  -servername api.test -CAfile certs/ca.crt \
+  -verify_hostname api.test -verify_return_error </dev/null
+```
+
+This command should **fail hostname verification** in Phase 27. To inspect
+without verifying the hostname, use `openssl s_client` without
+`-verify_hostname` **only in this isolated lab**. No PDFs, generated
+certificates, private keys, or build artifacts belong in Git. `api.test`
+is a reserved example hostname; no DNS entry is necessary when connecting
+directly to `127.0.0.1` while passing `-servername api.test`.
