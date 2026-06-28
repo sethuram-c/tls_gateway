@@ -510,7 +510,8 @@ curl -i --cacert certs/ca.crt https://localhost:18444/large -o /dev/null
 **Deliberate learning limits:** HTTP/1.1 `GET` only, one request per client
 connection, maximum 8 KiB request headers, no request bodies/pipelining,
 `Connection: close` required on upstream responses, loopback networking,
-128 tracked connections, basic 15-second idle timeout, no mTLS/SNI yet.
+128 tracked connections, basic 15-second idle timeout, no mTLS;
+Phase 26 predates SNI certificate selection.
 The proxy accepts an absent Connection header (adds `Connection: close`) or
 an explicit `Connection: close`; other Connection values get HTTP 400.
 Upstream responses are streamed with an 8 KiB buffer; the proxy stops
@@ -556,3 +557,41 @@ without verifying the hostname, use `openssl s_client` without
 certificates, private keys, or build artifacts belong in Git. `api.test`
 is a reserved example hostname; no DNS entry is necessary when connecting
 directly to `127.0.0.1` while passing `-servername api.test`.
+
+## Phase 28: select certificates using TLS SNI
+
+The event-driven proxy can now optionally use **two** TLS 1.3 server
+certificates: `localhost` (default) and `api.test` (alternate). The alternate
+certificate is loaded into its own `SSL_CTX`, and the OpenSSL server-name
+callback switches the connection's context during `ClientHello`, before
+certificate delivery. Both contexts stay alive until the server exits.
+
+```bash
+make certs             # only if you have not generated the CA yet
+make certs-sni         # only if api.test certificate has not been generated
+make && make test
+python3 tests/http_backend.py
+# In another terminal:
+./build/tls-gateway --epoll-tls-proxy \
+  certs/server.crt certs/server.key 18444 18081 \
+  certs/api.test.crt certs/api.test.key
+# In a third terminal:
+curl --cacert certs/ca.crt https://localhost:18444/health
+curl --noproxy "*" --cacert certs/ca.crt --resolve api.test:18444:127.0.0.1 \
+  https://api.test:18444/health
+```
+
+Only `api.test` selects the alternate context. `localhost` and no SNI use
+the default certificate, and unknown DNS SNI is rejected using the TLS
+`unrecognized_name` alert when two-hostname mode is enabled. An IP-address
+client without SNI can still verify the default `127.0.0.1` IP SAN. SNI is
+client-supplied and **not authentication**; clients must still verify the
+certificate chain and hostname. The HTTP backend remains the same regardless
+of SNI (this stage does not implement virtual-host routing).
+
+The original four-argument `--epoll-tls-proxy CERT KEY TLS_PORT BACKEND_PORT`
+mode still works and behaves as in Phase 27 (default certificate only).
+`tests/test_sni_observation.py` keeps that compatibility covered. The new
+`tests/test_sni_selection.py` tests both certificates, negative handshakes,
+and invalid key material using temporary CA/certificates. Never commit
+`certs/`, any private key, or the separate personal learning PDF.

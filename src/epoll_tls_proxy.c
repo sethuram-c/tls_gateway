@@ -3,6 +3,7 @@
 #include "backend_async.h"
 #include "connection.h"
 #include "socket_flags.h"
+#include "sni_select.h"
 #include "tls_context.h"
 
 #include <arpa/inet.h>
@@ -218,10 +219,8 @@ static bool open_upstream(int epfd, Connection *c, ProxySession *s,
     return client_interest(epfd, c, 0);
 }
 
-/* Phase 27: observe the requested SNI, without selecting another cert.
- * Treat SNI as untrusted input; log only safe printable hostname characters.
- * SNI is sent in ClientHello and is not an HTTP Host header. */
-static void log_requested_sni(const SSL *ssl)
+/* Keep SNI logs bounded and printable; SNI is untrusted input. */
+static void log_requested_sni(const SSL *ssl, const SSL_CTX *api_context)
 {
     const char *raw = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
     if (raw == NULL || *raw == '\0') {
@@ -240,18 +239,24 @@ static void log_requested_sni(const SSL *ssl)
         }
     }
     safe[i] = '\0';
-    printf("TLS client SNI: %s (default certificate; no SNI selection yet)\n", safe);
+    if (api_context == NULL) {
+        printf("TLS client SNI: %s (default certificate; no SNI selection yet)\n", safe);
+    } else {
+        const char *selected = SSL_get_SSL_CTX(ssl) == api_context
+                                   ? "api.test" : "localhost";
+        printf("TLS client SNI: %s (selected %s certificate)\n", safe, selected);
+    }
 }
 
 static bool tls_step(int epfd, Connection *c, ProxySession *s,
-                     unsigned short backend_port)
+                     unsigned short backend_port, const SSL_CTX *api_context)
 {
     s->active_at = time(NULL);
     if (s->stage == P_HANDSHAKE) {
         int n = SSL_accept(s->ssl);
         if (n == 1) {
             s->stage = P_REQUEST;
-            log_requested_sni(s->ssl);
+            log_requested_sni(s->ssl, api_context);
             printf("Non-blocking TLS handshake complete: fd=%d\n", c->fd);
         } else {
             int err = SSL_get_error(s->ssl, n);
@@ -382,10 +387,26 @@ static void accept_clients(int epfd, int listener, SSL_CTX *context,
 }
 
 int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_path,
-                        unsigned short tls_port, unsigned short backend_port)
+                        unsigned short tls_port, unsigned short backend_port,
+                        const char *api_certificate_path, const char *api_key_path)
 {
     SSL_CTX *context = tls_server_context_new(certificate_path, private_key_path);
     if (context == NULL) return 1;
+    SSL_CTX *api_context = NULL;
+    if ((api_certificate_path == NULL) != (api_key_path == NULL)) {
+        fputs("SNI requires both api.test certificate and key\n", stderr);
+        SSL_CTX_free(context);
+        return 1;
+    }
+    if (api_certificate_path != NULL) {
+        api_context = tls_server_context_new(api_certificate_path, api_key_path);
+        if (api_context == NULL || sni_install_api_test(context, api_context) < 0) {
+            fputs("failed to configure SNI certificate selection\n", stderr);
+            SSL_CTX_free(api_context);
+            SSL_CTX_free(context);
+            return 1;
+        }
+    }
     proxy_stop = 0;
     int listener = -1, epfd = -1, status = 1;
     ProxySession *sessions = NULL;
@@ -431,7 +452,7 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
                 ok = backend_step(epfd, c, s);
             } else if (s->stage == P_HANDSHAKE || s->stage == P_REQUEST ||
                        s->stage == P_SEND_CLIENT) {
-                ok = tls_step(epfd, c, s, backend_port);
+                ok = tls_step(epfd, c, s, backend_port, api_context);
             } else {
                 /* Parked client can still disconnect while the backend runs. */
                 ok = (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) == 0;
@@ -458,6 +479,7 @@ cleanup:
     free(sessions);
     if (epfd >= 0) close(epfd);
     if (listener >= 0) close(listener);
+    SSL_CTX_free(api_context);
     SSL_CTX_free(context);
     return status;
 }

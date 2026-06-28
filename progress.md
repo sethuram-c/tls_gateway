@@ -29,3 +29,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 25 - Non-blocking backend connect with epoll and SO_ERROR (2026-12-25)
 - [x] Phase 26 - Event-driven TLS termination and non-blocking HTTP forwarding (2026-12-26)
 - [x] Phase 27 - SNI fundamentals, alternate dev certificate and hostname observation (2026-12-27)
+- [x] Phase 28 - SNI callback selects localhost or api.test certificate (2026-12-28)

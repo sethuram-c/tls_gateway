@@ -50,4 +50,4 @@ openssl verify -purpose sslserver -verify_hostname api.test \
 mv -n -- "$work_dir/api.test.key" "$cert_dir/api.test.key"
 mv -n -- "$work_dir/api.test.crt" "$cert_dir/api.test.crt"
 printf 'Created api.test.key and api.test.crt in %s\n' "$cert_dir"
-printf 'NOTE: phase 27 observes SNI but does not select this certificate yet.\n'
+printf 'Pass api.test.crt and api.test.key as optional proxy arguments to enable SNI selection.\n'

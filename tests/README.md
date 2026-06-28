@@ -159,3 +159,14 @@ certificates (`localhost`, `api.test`) and checks their SANs. It verifies that
 `localhost` certificate. In particular, a verified `api.test` connection must
 fail hostname verification until Phase 28's certificate selection is added.
 No files from this test are committed, and no global CA trust is changed.
+
+
+## Phase 28 - TLS SNI certificate selection
+
+Run `python3 tests/test_sni_selection.py` (or `make test`). Tests generate a
+throwaway local CA and both hostname certificates, then launch the real C
+non-blocking proxy and Python HTTP backend. They assert successful strict
+TLS 1.3 hostname verification for localhost, api.test, and API.TEST; default
+certificate for no SNI / loopback IP; rejection of unknown DNS SNI; recovery
+after failed handshakes; and startup failure for a mismatched alternate key.
+The earlier Phase 27 single-certificate test remains unchanged.
