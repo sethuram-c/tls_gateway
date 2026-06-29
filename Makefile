@@ -95,6 +95,7 @@ test: $(TARGET)
 	python3 tests/test_epoll_tls_proxy.py
 	python3 tests/test_sni_observation.py
 	python3 tests/test_sni_selection.py
+	python3 tests/test_sni_security.py
 certs:
 	bash scripts/generate_dev_certs.sh
 certs-sni:

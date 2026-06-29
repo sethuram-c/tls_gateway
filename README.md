@@ -595,3 +595,20 @@ mode still works and behaves as in Phase 27 (default certificate only).
 `tests/test_sni_selection.py` tests both certificates, negative handshakes,
 and invalid key material using temporary CA/certificates. Never commit
 `certs/`, any private key, or the separate personal learning PDF.
+
+## Phase 29: multi-hostname TLS security verification
+
+Run `python3 tests/test_sni_security.py` to exercise the real epoll HTTPS
+proxy with disposable CAs and certificates. Strict Python TLS 1.3 clients
+verify the CA chain and hostname, then compare the *exact* leaf certificate
+SHA-256 fingerprint for `localhost`, `api.test` and mixed-case `API.TEST`.
+The test also verifies the no-SNI default and loopback IP SAN; confirms an
+HTTP `Host` header cannot change a certificate already selected via SNI;
+rejects a different CA; and proves unknown SNI fails at the server using a
+**diagnostic-only unverified** client. Twenty concurrent mixed-SNI clients
+are exercised alongside an incomplete TLS handshake. The C gateway code is
+unchanged from Phase 28: this phase adds security-oriented regression coverage.
+
+Run `make test` for all suites. No certificates, keys, or personal PDF are
+committed. This is a local TLS learning lab, not a general-purpose hardened
+reverse proxy, and the two hostnames still share one HTTP backend.

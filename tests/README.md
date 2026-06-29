@@ -170,3 +170,13 @@ TLS 1.3 hostname verification for localhost, api.test, and API.TEST; default
 certificate for no SNI / loopback IP; rejection of unknown DNS SNI; recovery
 after failed handshakes; and startup failure for a mismatched alternate key.
 The earlier Phase 27 single-certificate test remains unchanged.
+
+
+## Phase 29: stricter SNI regression matrix
+
+`python3 tests/test_sni_security.py` tests exact leaf-certificate selection
+by SHA-256 DER fingerprint with strict CA/hostname verification, uppercase
+SNI, Host-header independence, no-SNI/IP behavior, wrong CA, unknown-SNI
+server rejection, and concurrent hostname isolation during a stalled TLS
+handshake. It uses only Python's standard library and temporary certificate
+files. `CERT_NONE` is used only in the negative server-rejection probe.
