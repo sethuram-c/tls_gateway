@@ -190,3 +190,14 @@ permissions, refusal to overwrite keys, and a live loopback OpenSSL TLS 1.3
 server requiring a client certificate. Trusted client identity succeeds;
 missing client certificate and a `serverAuth` certificate are rejected. The
 C gateway remains unchanged in this learning phase.
+
+## Phase 31: mandatory client certificate verification in C
+
+`python3 tests/test_mtls_gateway.py` generates disposable CA, two server
+certificates, and client identities; launches the actual `--epoll-tls-proxy-mtls`
+C gateway and local Python backend; then checks authenticated requests on both
+SNI hostnames, rejection of missing / wrong-purpose / alien-CA certificates,
+20 concurrent authenticated clients, and fail-closed startup for an invalid
+client CA path. It additionally asserts rejected clients never reached the
+backend and checks that the original `--epoll-tls-proxy` mode still accepts
+one-way TLS. No third-party Python libraries, committed keys, or PDFs.

@@ -629,8 +629,8 @@ python3 tests/test_mtls_fundamentals.py
 The test generates throwaway certificates and uses `openssl s_server -Verify 1`
 to **require** a client certificate. A Python TLS 1.3 client succeeds with
 `client.crt/client.key` but is rejected without them or with a serverAuth-only
-certificate. The C gateway **does not require or validate client certificates
-in Phase 30**; enabling mTLS there is the next phase. A trusted certificate
+certificate. The Phase 30 lab **did not change C gateway authentication**; the Phase 31
+implementation below enables and enforces mTLS directly in the gateway. A trusted certificate
 proves CA-issued identity, not application authorization; map identities to
 permissions explicitly before any real deployment. All lab keys stay in
 `certs/` and out of Git.
@@ -639,3 +639,43 @@ The original Phase 9 CA and server certificates are valid for only 30 days.
 Check `openssl x509 -in certs/ca.crt -noout -dates` before manual demos and
 reissue your disposable lab CA/leaf certificates if they've expired. Never
 install the test CA in the system trust store.
+
+## Phase 31: require client certificates in the C epoll TLS proxy
+
+The explicit `--epoll-tls-proxy-mtls` command enables two-way TLS
+on the event-driven reverse proxy. It loads a **trusted client CA** before
+binding the listener and configures both the default and alternate SNI
+contexts using `SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT`. OpenSSL
+performs chain and `clientAuth` purpose validation during the TLS handshake;
+`SSL_get_verify_result()` and `SSL_get1_peer_certificate()` provide a
+post-handshake sanity check before forwarding any HTTP data.
+
+```bash
+make certs-client  # once, after generating certs/ with 'make certs'
+make certs-sni     # once, to enable optional api.test SNI
+make && python3 tests/test_mtls_gateway.py
+
+# Terminal 1: Python backend
+python3 tests/http_backend.py
+# Terminal 2: C gateway with mandatory client authentication
+./build/tls-gateway --epoll-tls-proxy-mtls \
+  certs/server.crt certs/server.key 18444 18081 certs/ca.crt \
+  certs/api.test.crt certs/api.test.key
+# Terminal 3: authenticated client succeeds
+curl --noproxy '*' -i --cacert certs/ca.crt \
+  --cert certs/client.crt --key certs/client.key \
+  https://localhost:18444/health
+# No --cert/--key: expected TLS rejection (no HTTP 200)
+curl --noproxy '*' -i --cacert certs/ca.crt \
+  https://localhost:18444/health
+```
+
+The alternate SNI certificate/key pair is optional in mTLS mode. If provided,
+client authentication is mandatory for *both* virtual hosts. No-SNI clients
+use the default server certificate; unknown SNI is rejected in two-host mode.
+The existing `--epoll-tls-proxy` command remains one-way TLS for compatibility.
+This project uses only a disposable development CA; do not trust it system-wide
+or expose the unaudited educational proxy to public networks. A verified
+client certificate authenticates a CA-issued identity but does **not** supply
+application authorization or revocation checking. Keep all generated keys
+out of Git, and keep the personal learning PDF outside the repo.

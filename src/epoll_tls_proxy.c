@@ -4,6 +4,7 @@
 #include "connection.h"
 #include "socket_flags.h"
 #include "sni_select.h"
+#include "mtls.h"
 #include "tls_context.h"
 
 #include <arpa/inet.h>
@@ -249,12 +250,18 @@ static void log_requested_sni(const SSL *ssl, const SSL_CTX *api_context)
 }
 
 static bool tls_step(int epfd, Connection *c, ProxySession *s,
-                     unsigned short backend_port, const SSL_CTX *api_context)
+                     unsigned short backend_port, const SSL_CTX *api_context,
+                     bool mtls_required)
 {
     s->active_at = time(NULL);
     if (s->stage == P_HANDSHAKE) {
         int n = SSL_accept(s->ssl);
         if (n == 1) {
+            /* Defense in depth: the context MUST already reject untrusted
+             * client certificates before allowing application data. */
+            if (mtls_required && !mtls_peer_verified(s->ssl)) return false;
+            if (mtls_required)
+                printf("mTLS client certificate verified: fd=%d\n", c->fd);
             s->stage = P_REQUEST;
             log_requested_sni(s->ssl, api_context);
             printf("Non-blocking TLS handshake complete: fd=%d\n", c->fd);
@@ -388,7 +395,8 @@ static void accept_clients(int epfd, int listener, SSL_CTX *context,
 
 int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_path,
                         unsigned short tls_port, unsigned short backend_port,
-                        const char *api_certificate_path, const char *api_key_path)
+                        const char *api_certificate_path, const char *api_key_path,
+                        const char *client_ca_path)
 {
     SSL_CTX *context = tls_server_context_new(certificate_path, private_key_path);
     if (context == NULL) return 1;
@@ -406,6 +414,17 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
             SSL_CTX_free(context);
             return 1;
         }
+    }
+    /* Configure all SSL_CTX instances before accepting clients. In SNI mode
+     * OpenSSL may switch SSL_CTX on ClientHello, so each must require mTLS. */
+    if (client_ca_path != NULL &&
+        (mtls_require_client_cert(context, client_ca_path) < 0 ||
+         (api_context != NULL &&
+          mtls_require_client_cert(api_context, client_ca_path) < 0))) {
+        fputs("failed to configure required client certificate verification\n", stderr);
+        SSL_CTX_free(api_context);
+        SSL_CTX_free(context);
+        return 1;
     }
     proxy_stop = 0;
     int listener = -1, epfd = -1, status = 1;
@@ -426,6 +445,7 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
     setvbuf(stdout, NULL, _IOLBF, 0);
     printf("epoll TLS proxy ready on 127.0.0.1:%u -> 127.0.0.1:%u\n",
            tls_port, backend_port);
+    if (client_ca_path != NULL) puts("mTLS mode: client certificate required");
     status = 0;
     while (!proxy_stop) {
         struct epoll_event events[PROXY_EVENTS];
@@ -452,7 +472,8 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
                 ok = backend_step(epfd, c, s);
             } else if (s->stage == P_HANDSHAKE || s->stage == P_REQUEST ||
                        s->stage == P_SEND_CLIENT) {
-                ok = tls_step(epfd, c, s, backend_port, api_context);
+                ok = tls_step(epfd, c, s, backend_port, api_context,
+                              client_ca_path != NULL);
             } else {
                 /* Parked client can still disconnect while the backend runs. */
                 ok = (events[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) == 0;

@@ -32,3 +32,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 28 - SNI callback selects localhost or api.test certificate (2026-12-28)
 - [x] Phase 29 - Verify multi-hostname TLS trust, SNI and certificate isolation (2026-12-29)
 - [x] Phase 30 - Generate clientAuth identity and verify mutual TLS requirements (2026-12-30)
+- [x] Phase 31 - Require verified client certificates in C epoll TLS proxy (2026-12-31)
