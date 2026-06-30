@@ -180,3 +180,13 @@ SNI, Host-header independence, no-SNI/IP behavior, wrong CA, unknown-SNI
 server rejection, and concurrent hostname isolation during a stalled TLS
 handshake. It uses only Python's standard library and temporary certificate
 files. `CERT_NONE` is used only in the negative server-rejection probe.
+
+
+## Phase 30: client certificates and mTLS fundamentals
+
+`python3 tests/test_mtls_fundamentals.py` generates isolated temporary CA,
+server, and `clientAuth` certificate files. Checks OpenSSL purpose restrictions,
+permissions, refusal to overwrite keys, and a live loopback OpenSSL TLS 1.3
+server requiring a client certificate. Trusted client identity succeeds;
+missing client certificate and a `serverAuth` certificate are rejected. The
+C gateway remains unchanged in this learning phase.

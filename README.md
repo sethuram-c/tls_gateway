@@ -612,3 +612,30 @@ unchanged from Phase 28: this phase adds security-oriented regression coverage.
 Run `make test` for all suites. No certificates, keys, or personal PDF are
 committed. This is a local TLS learning lab, not a general-purpose hardened
 reverse proxy, and the two hostnames still share one HTTP backend.
+
+## Phase 30: mutual TLS fundamentals (client certificates)
+
+We use the existing disposable lab CA to issue a *separate* TLS client identity.
+The new script writes `certs/client.crt` and `certs/client.key` without overwriting
+existing keys or changing any server certificates:
+
+```bash
+make certs-client  # after 'make certs' in earlier phases
+openssl verify -CAfile certs/ca.crt -purpose sslclient certs/client.crt
+openssl verify -CAfile certs/ca.crt -purpose sslclient certs/server.crt  # expected FAIL
+python3 tests/test_mtls_fundamentals.py
+```
+
+The test generates throwaway certificates and uses `openssl s_server -Verify 1`
+to **require** a client certificate. A Python TLS 1.3 client succeeds with
+`client.crt/client.key` but is rejected without them or with a serverAuth-only
+certificate. The C gateway **does not require or validate client certificates
+in Phase 30**; enabling mTLS there is the next phase. A trusted certificate
+proves CA-issued identity, not application authorization; map identities to
+permissions explicitly before any real deployment. All lab keys stay in
+`certs/` and out of Git.
+
+The original Phase 9 CA and server certificates are valid for only 30 days.
+Check `openssl x509 -in certs/ca.crt -noout -dates` before manual demos and
+reissue your disposable lab CA/leaf certificates if they've expired. Never
+install the test CA in the system trust store.
