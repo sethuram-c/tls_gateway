@@ -201,3 +201,13 @@ SNI hostnames, rejection of missing / wrong-purpose / alien-CA certificates,
 client CA path. It additionally asserts rejected clients never reached the
 backend and checks that the original `--epoll-tls-proxy` mode still accepts
 one-way TLS. No third-party Python libraries, committed keys, or PDFs.
+
+## Phase 32: rejected mTLS sessions never reach the backend
+
+`python3 tests/test_mtls_rejections.py` generates temporary certificates
+and runs a threaded loopback backend that counts **accepted TCP connections**
+as well as HTTP requests. Negative TLS cases must not increment either
+count. Valid clients must increment both counts by the same amount. It also
+checks mixed-SNI behavior, no-SNI fallback, a stalled handshake, concurrent
+authenticated recovery, key mismatch, and fail-closed startup with a missing
+client CA. Requires no root or third-party Python packages.

@@ -101,6 +101,7 @@ test: $(TARGET)
 	python3 tests/test_sni_security.py
 	python3 tests/test_mtls_fundamentals.py
 	python3 tests/test_mtls_gateway.py
+	python3 tests/test_mtls_rejections.py
 certs:
 	bash scripts/generate_dev_certs.sh
 certs-sni:

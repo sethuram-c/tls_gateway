@@ -679,3 +679,18 @@ or expose the unaudited educational proxy to public networks. A verified
 client certificate authenticates a CA-issued identity but does **not** supply
 application authorization or revocation checking. Keep all generated keys
 out of Git, and keep the personal learning PDF outside the repo.
+
+## Phase 32: mTLS rejection and upstream-isolation security tests
+
+`python3 tests/test_mtls_rejections.py` uses a disposable CA, three local
+client identities and a counting HTTP backend. It asserts that missing,
+wrong-purpose and foreign-CA client certificates, unknown SNI, and TLS 1.2
+never create a backend TCP connection. Trusted clients work for both SNI
+names; an incomplete handshake does not block authenticated traffic. A
+missing client CA makes mTLS mode fail at startup rather than silently
+downgrading to one-way TLS. Run `make test` for the complete regression suite.
+
+The tests verify **authentication before proxying**, not user-role authorization.
+The proxy is still an educational HTTP/1.1 GET-only project and does not
+implement certificate revocation or client identity allowlists. Keep it on
+loopback and keep the personal phase PDF outside Git.
