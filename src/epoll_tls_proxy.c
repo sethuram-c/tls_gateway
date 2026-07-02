@@ -5,7 +5,7 @@
 #include "socket_flags.h"
 #include "sni_select.h"
 #include "mtls.h"
-#include "tls_context.h"
+#include "tls_credentials.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -36,6 +36,7 @@ typedef enum {
 
 typedef struct {
     SSL *ssl;
+    TlsCredentials *credentials; /* keep SNI callback argument alive */
     int backend_fd;
     ProxyStage stage;
     time_t active_at;
@@ -48,11 +49,18 @@ typedef struct {
 } ProxySession;
 
 static volatile sig_atomic_t proxy_stop;
+static volatile sig_atomic_t proxy_reload;
 
 static void stop_handler(int sig)
 {
     (void)sig;
     proxy_stop = 1;
+}
+
+static void reload_handler(int sig)
+{
+    (void)sig;
+    proxy_reload = 1;
 }
 
 static int install_signals(void)
@@ -62,6 +70,8 @@ static int install_signals(void)
     sigemptyset(&sa.sa_mask);
     if (sigaction(SIGINT, &sa, NULL) < 0 ||
         sigaction(SIGTERM, &sa, NULL) < 0) return -1;
+    sa.sa_handler = reload_handler;
+    if (sigaction(SIGHUP, &sa, NULL) < 0) return -1;
     sa.sa_handler = SIG_IGN;
     return sigaction(SIGPIPE, &sa, NULL);
 }
@@ -110,6 +120,7 @@ static void close_client(int epfd, ConnectionRegistry *registry,
     /* A best-effort close_notify is sufficient for this one-shot lab. */
     if (s->ssl != NULL && SSL_is_init_finished(s->ssl)) (void)SSL_shutdown(s->ssl);
     SSL_free(s->ssl);
+    if (s->credentials != NULL) --s->credentials->users;
     memset(s, 0, sizeof(*s));
     s->backend_fd = -1;
     connection_release(registry, connection);
@@ -250,7 +261,7 @@ static void log_requested_sni(const SSL *ssl, const SSL_CTX *api_context)
 }
 
 static bool tls_step(int epfd, Connection *c, ProxySession *s,
-                     unsigned short backend_port, const SSL_CTX *api_context,
+                     unsigned short backend_port,
                      bool mtls_required)
 {
     s->active_at = time(NULL);
@@ -263,7 +274,7 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
             if (mtls_required)
                 printf("mTLS client certificate verified: fd=%d\n", c->fd);
             s->stage = P_REQUEST;
-            log_requested_sni(s->ssl, api_context);
+            log_requested_sni(s->ssl, s->credentials->alternate);
             printf("Non-blocking TLS handshake complete: fd=%d\n", c->fd);
         } else {
             int err = SSL_get_error(s->ssl, n);
@@ -363,7 +374,7 @@ static bool backend_step(int epfd, Connection *c, ProxySession *s)
     return true;
 }
 
-static void accept_clients(int epfd, int listener, SSL_CTX *context,
+static void accept_clients(int epfd, int listener, TlsCredentials *credentials,
                            ConnectionRegistry *registry, ProxySession *sessions)
 {
     for (;;) {
@@ -383,7 +394,9 @@ static void accept_clients(int epfd, int listener, SSL_CTX *context,
         s->backend_fd = -1;
         s->stage = P_HANDSHAKE;
         s->active_at = time(NULL);
-        s->ssl = SSL_new(context);
+        s->credentials = credentials;
+    ++credentials->users;
+    s->ssl = SSL_new(credentials->primary);
         if (s->ssl == NULL || SSL_set_fd(s->ssl, fd) != 1 ||
             watch_fd(epfd, EPOLL_CTL_ADD, fd, c->token, EPOLLIN) < 0) {
             close_client(epfd, registry, sessions, c);
@@ -398,35 +411,13 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
                         const char *api_certificate_path, const char *api_key_path,
                         const char *client_ca_path)
 {
-    SSL_CTX *context = tls_server_context_new(certificate_path, private_key_path);
-    if (context == NULL) return 1;
-    SSL_CTX *api_context = NULL;
-    if ((api_certificate_path == NULL) != (api_key_path == NULL)) {
-        fputs("SNI requires both api.test certificate and key\n", stderr);
-        SSL_CTX_free(context);
-        return 1;
-    }
-    if (api_certificate_path != NULL) {
-        api_context = tls_server_context_new(api_certificate_path, api_key_path);
-        if (api_context == NULL || sni_install_api_test(context, api_context) < 0) {
-            fputs("failed to configure SNI certificate selection\n", stderr);
-            SSL_CTX_free(api_context);
-            SSL_CTX_free(context);
-            return 1;
-        }
-    }
-    /* Configure all SSL_CTX instances before accepting clients. In SNI mode
-     * OpenSSL may switch SSL_CTX on ClientHello, so each must require mTLS. */
-    if (client_ca_path != NULL &&
-        (mtls_require_client_cert(context, client_ca_path) < 0 ||
-         (api_context != NULL &&
-          mtls_require_client_cert(api_context, client_ca_path) < 0))) {
-        fputs("failed to configure required client certificate verification\n", stderr);
-        SSL_CTX_free(api_context);
-        SSL_CTX_free(context);
-        return 1;
-    }
+    TlsCredentials *current = tls_credentials_load(
+        certificate_path, private_key_path, api_certificate_path,
+        api_key_path, client_ca_path);
+    if (current == NULL) return 1;
+    TlsCredentials *retired = NULL;
     proxy_stop = 0;
+    proxy_reload = 0;
     int listener = -1, epfd = -1, status = 1;
     ProxySession *sessions = NULL;
     if (install_signals() < 0 || (listener = listener_create(tls_port)) < 0 ||
@@ -448,6 +439,25 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
     if (client_ca_path != NULL) puts("mTLS mode: client certificate required");
     status = 0;
     while (!proxy_stop) {
+        /* A signal handler sets only a flag. Disk I/O and OpenSSL run here.
+         * No old context is released until all its accepted clients close. */
+        if (proxy_reload) {
+            proxy_reload = 0;
+            TlsCredentials *candidate = tls_credentials_load(
+                certificate_path, private_key_path, api_certificate_path,
+                api_key_path, client_ca_path);
+            if (candidate != NULL) {
+                TlsCredentials *old = current;
+                current = candidate;
+                old->next = retired;
+                retired = old;
+                puts("TLS credentials reloaded successfully (new clients only)");
+            } else {
+                fputs("TLS credential reload failed; keeping previous generation\n",
+                      stderr);
+            }
+        }
+        tls_credentials_collect(&retired);
         struct epoll_event events[PROXY_EVENTS];
         int count = epoll_wait(epfd, events, PROXY_EVENTS, 250);
         if (count < 0) {
@@ -459,7 +469,7 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
         for (int i = 0; i < count && !proxy_stop; ++i) {
             uint64_t tag = events[i].data.u64;
             if (tag == 0) {
-                accept_clients(epfd, listener, context, &registry, sessions);
+                accept_clients(epfd, listener, current, &registry, sessions);
                 continue;
             }
             bool from_backend = (tag & BACKEND_MARK) != 0;
@@ -472,7 +482,7 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
                 ok = backend_step(epfd, c, s);
             } else if (s->stage == P_HANDSHAKE || s->stage == P_REQUEST ||
                        s->stage == P_SEND_CLIENT) {
-                ok = tls_step(epfd, c, s, backend_port, api_context,
+                ok = tls_step(epfd, c, s, backend_port,
                               client_ca_path != NULL);
             } else {
                 /* Parked client can still disconnect while the backend runs. */
@@ -500,7 +510,8 @@ cleanup:
     free(sessions);
     if (epfd >= 0) close(epfd);
     if (listener >= 0) close(listener);
-    SSL_CTX_free(api_context);
-    SSL_CTX_free(context);
+    tls_credentials_free(current);
+    tls_credentials_collect(&retired);
+    /* All sessions have been closed before cleanup. */
     return status;
 }

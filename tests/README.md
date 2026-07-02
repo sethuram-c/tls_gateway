@@ -211,3 +211,12 @@ count. Valid clients must increment both counts by the same amount. It also
 checks mixed-SNI behavior, no-SNI fallback, a stalled handshake, concurrent
 authenticated recovery, key mismatch, and fail-closed startup with a missing
 client CA. Requires no root or third-party Python packages.
+
+## Phase 33 - hot certificate reload
+
+`python3 tests/test_cert_reload.py` starts its own local HTTP backend and a
+mandatory-mTLS, two-SNI gateway. It replaces both server certificates with
+new CA-signed identities, issues `SIGHUP`, verifies new certificate fingerprints
+and unchanged hostname trust, finishes an already-open session, then proves a
+broken key reload retains the previous working configuration and mTLS policy.
+All keys are disposable and temporary; no certificates or PDF are committed.

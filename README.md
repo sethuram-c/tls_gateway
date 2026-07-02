@@ -694,3 +694,35 @@ The tests verify **authentication before proxying**, not user-role authorization
 The proxy is still an educational HTTP/1.1 GET-only project and does not
 implement certificate revocation or client identity allowlists. Keep it on
 loopback and keep the personal phase PDF outside Git.
+
+## Phase 33: SIGHUP certificate hot reload (epoll HTTPS proxy)
+
+The `--epoll-tls-proxy` and `--epoll-tls-proxy-mtls` modes now reload their
+configured server certificate/key pairs (including `api.test` when configured)
+when they receive `SIGHUP`. The configured mTLS trust file is reloaded too.
+Each reload builds and checks **a complete new TLS configuration** first;
+only if every certificate/key and CA load succeeds is it used for **new**
+connections. If any component is invalid, the last good configuration stays
+active. Existing sessions retain their original generation, including the
+SNI callback's context pointer, until those sessions close. Reload does not
+reopen the listening socket or interrupt existing TLS sessions.
+
+In a development-only terminal, after generating and installing **valid** new
+cert/key files at the same configured paths, run:
+
+```bash
+# Do not replace only one file and signal before the corresponding key is ready.
+kill -HUP "$(pgrep -f '^./build/tls-gateway --epoll-tls-proxy' | head -n 1)"
+# Follow logs for "TLS credentials reloaded successfully" or
+# "TLS credential reload failed; keeping previous generation".
+python3 tests/test_cert_reload.py
+```
+
+A safe operator workflow stages the replacements outside the live directory,
+verifies keys and certificates, installs **both** configured pairs, and only
+then signals the process. File installation is not an atomic multi-file OS
+transaction; **the gateway's validated in-memory swap is atomic**. The test
+creates a local disposable CA and certs, verifies that certificate fingerprints
+change on new sessions, proves an existing partial HTTP request finishes, and
+checks invalid reloads plus mTLS enforcement. This is a learning-only loopback
+service, **not** a general-purpose production HTTPS proxy.
