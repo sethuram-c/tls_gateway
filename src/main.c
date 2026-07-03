@@ -1,3 +1,4 @@
+#include "gateway_config.h"
 #include "tcp_proxy.h"
 #include "backend_connect.h"
 #include "log.h"
@@ -18,7 +19,7 @@
 
 static void print_usage(FILE *stream)
 {
-    fprintf(stream, "Usage: tls-gateway [--help | --version | --socket-demo | --nonblock-demo | --epoll-demo | --epoll-server PORT | --epoll-tls CERT KEY PORT | --epoll-tls-connect CERT KEY TLS_PORT BACKEND_PORT | --epoll-tls-proxy CERT KEY TLS_PORT BACKEND_PORT [API_CERT API_KEY] | --epoll-tls-proxy-mtls CERT KEY TLS_PORT BACKEND_PORT CLIENT_CA [API_CERT API_KEY] | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
+    fprintf(stream, "Usage: tls-gateway [--help | --version | --config FILE | --check-config FILE | --socket-demo | --nonblock-demo | --epoll-demo | --epoll-server PORT | --epoll-tls CERT KEY PORT | --epoll-tls-connect CERT KEY TLS_PORT BACKEND_PORT | --epoll-tls-proxy CERT KEY TLS_PORT BACKEND_PORT [API_CERT API_KEY] | --epoll-tls-proxy-mtls CERT KEY TLS_PORT BACKEND_PORT CLIENT_CA [API_CERT API_KEY] | --tcp-server | --backend-connect PORT | --tcp-proxy LISTEN_PORT BACKEND_PORT | --tls-check CERT KEY | --tls-listen CERT KEY PORT | --tls-proxy CERT KEY LISTEN_PORT BACKEND_PORT]\n");
 }
 
 static int parse_port(const char *text, unsigned short *out)
@@ -40,6 +41,23 @@ int main(int argc, char *argv[])
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
         puts("tls-gateway 0.1.0");
         return 0;
+    }
+    if (argc == 3 && (strcmp(argv[1], "--config") == 0 ||
+                      strcmp(argv[1], "--check-config") == 0)) {
+        GatewayConfig config;
+        if (gateway_config_load(argv[2], &config) < 0) return 2;
+        if (strcmp(argv[1], "--check-config") == 0) {
+            printf("Config OK: listener=%u backend=%u mTLS=%s SNI=%s\n",
+                   (unsigned)config.listen_port, (unsigned)config.backend_port,
+                   config.require_mtls ? "on" : "off",
+                   config.api_cert[0] ? "localhost+api.test" : "default-only");
+            return 0;
+        }
+        return run_epoll_tls_proxy(config.server_cert, config.server_key,
+                                   config.listen_port, config.backend_port,
+                                   config.api_cert[0] ? config.api_cert : NULL,
+                                   config.api_key[0] ? config.api_key : NULL,
+                                   config.require_mtls ? config.client_ca : NULL);
     }
     if (argc == 2 && strcmp(argv[1], "--socket-demo") == 0) return run_socket_demo();
     if (argc == 2 && strcmp(argv[1], "--nonblock-demo") == 0) return run_nonblock_demo();

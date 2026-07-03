@@ -1,0 +1,14 @@
+# Phase 34 - TLS Gateway local example (paths relative to working directory)
+# Start from the repository root: ./build/tls-gateway --config gateway.conf
+listen_port = 18444
+backend_port = 18081
+server_cert = certs/server.crt
+server_key = certs/server.key
+
+# Optional second SNI hostname (provide both paths or neither):
+# api_cert = certs/api.test.crt
+# api_key = certs/api.test.key
+
+# mTLS is off by default. To enable, set both:
+require_mtls = false
+# client_ca = certs/ca.crt

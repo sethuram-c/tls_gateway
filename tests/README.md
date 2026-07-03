@@ -220,3 +220,15 @@ new CA-signed identities, issues `SIGHUP`, verifies new certificate fingerprints
 and unchanged hostname trust, finishes an already-open session, then proves a
 broken key reload retains the previous working configuration and mTLS policy.
 All keys are disposable and temporary; no certificates or PDF are committed.
+
+## Phase 34: config-driven gateway tests
+
+`python3 tests/test_gateway_config.py` exercises the actual C config parser
+using `--check-config` and a dozen fail-closed cases (duplicates, missing
+required keys, bad port, malformed assignment, contradictory mTLS settings,
+and incomplete SNI pairs). It then generates disposable development keys,
+launches a local Python backend and C gateway via `--config`, and confirms
+verified TLS 1.3 HTTPS forwarding with and without mandatory mTLS. Both SNI
+hostnames are tested; an anonymous client must not reach the upstream in
+mTLS mode. No third-party Python library is required. All local ports are
+selected from the ephemeral range, and temporary keys/logs are removed.

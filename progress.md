@@ -35,3 +35,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 31 - Require verified client certificates in C epoll TLS proxy (2026-12-31)
 - [x] Phase 32 - Reject invalid mTLS peers before opening any backend connection (2027-01-01)
 - [x] Phase 33 - Reload validated TLS contexts on SIGHUP without dropping active sessions (2027-01-02)
+- [x] Phase 34 - Parse a minimal config file and launch validated HTTPS proxy modes (2027-01-03)

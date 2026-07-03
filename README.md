@@ -726,3 +726,55 @@ creates a local disposable CA and certs, verifies that certificate fingerprints
 change on new sessions, proves an existing partial HTTP request finishes, and
 checks invalid reloads plus mTLS enforcement. This is a learning-only loopback
 service, **not** a general-purpose production HTTPS proxy.
+
+## Phase 34: minimal gateway configuration file
+
+Instead of typing seven or eight positional arguments, you can start the
+existing event-driven HTTPS gateway using a small local `key = value` file.
+Only the launch path is new; the original CLI modes and TLS behavior remain
+unchanged.
+
+```bash
+cp config/gateway.conf.example gateway.conf
+make certs                   # if not already generated
+make
+./build/tls-gateway --check-config gateway.conf
+# Terminal 1: python3 tests/http_backend.py
+# Terminal 2: ./build/tls-gateway --config gateway.conf
+# Terminal 3: curl --noproxy '*' --cacert certs/ca.crt \
+#   https://localhost:18444/health
+python3 tests/test_gateway_config.py
+```
+
+Required keys: `listen_port`, `backend_port`, `server_cert`, `server_key`.
+Optional: `api_cert` and `api_key` (must appear together), `require_mtls`
+(`true` or `false`, default `false`), and `client_ca` (required only with
+`require_mtls=true`). Example for mTLS + two hostnames:
+
+```ini
+listen_port = 18444
+backend_port = 18081
+server_cert = certs/server.crt
+server_key = certs/server.key
+api_cert = certs/api.test.crt
+api_key = certs/api.test.key
+require_mtls = true
+client_ca = certs/ca.crt
+```
+
+Run `make certs-sni` and `make certs-client` to prepare optional features.
+Each key appears once. Blank lines and full-line `#` comments are allowed;
+unknown keys, duplicates, empty paths, invalid ports, and inconsistent mTLS
+settings are rejected **before binding**. There are no sections, includes,
+environment expansion, inline comments, or shell quoting. Paths are resolved
+against the **process working directory**, not the config file's directory;
+run the example from the repository root. `--check-config` checks syntax
+and relationships, **not** whether certificates are valid or ports are free;
+`--config` performs normal OpenSSL and bind validation on startup.
+
+`gateway.conf` is ignored by Git; only the sanitized example config is
+committed. Store **paths**, never private keys or passphrases, in config files.
+`SIGHUP` still reloads TLS credentials **from the paths captured at startup**;
+it does not re-read configuration or change ports. Keep the gateway bound
+to loopback; this remains an educational HTTP/1.1 GET-only proxy.
+The Phase 34 personal learning PDF stays outside the repository.
