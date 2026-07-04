@@ -8,6 +8,7 @@
 #include "tls_credentials.h"
 
 #include <arpa/inet.h>
+#include <assert.h>
 #include <errno.h>
 #include <openssl/ssl.h>
 #include <signal.h>
@@ -108,19 +109,36 @@ static int watch_fd(int epfd, int how, int fd, uint64_t token, uint32_t mask)
     return epoll_ctl(epfd, how, fd, &event);
 }
 
+/* ProxySession owns backend_fd; unregister and close it exactly once.
+ * TLS cleanup and error replies intentionally share this path. */
+static void close_upstream(int epfd, ProxySession *s)
+{
+    if (s->backend_fd < 0) return;
+    (void)epoll_ctl(epfd, EPOLL_CTL_DEL, s->backend_fd, NULL);
+    (void)close(s->backend_fd);
+    s->backend_fd = -1;
+}
+
+/* Ownership rules:
+ * - ConnectionRegistry owns the accepted client fd.
+ * - ProxySession owns its SSL object and optional upstream fd.
+ * - A credential generation remains alive while sessions reference it.
+ * Close the upstream, free SSL, release the generation, then close client. */
 static void close_client(int epfd, ConnectionRegistry *registry,
                          ProxySession *sessions, Connection *connection)
 {
+    if (connection == NULL || connection->state != CONN_OPEN) return;
     ProxySession *s = &sessions[session_slot(connection)];
     (void)epoll_ctl(epfd, EPOLL_CTL_DEL, connection->fd, NULL);
-    if (s->backend_fd >= 0) {
-        (void)epoll_ctl(epfd, EPOLL_CTL_DEL, s->backend_fd, NULL);
-        close(s->backend_fd);
-    }
+    close_upstream(epfd, s);
     /* A best-effort close_notify is sufficient for this one-shot lab. */
     if (s->ssl != NULL && SSL_is_init_finished(s->ssl)) (void)SSL_shutdown(s->ssl);
     SSL_free(s->ssl);
-    if (s->credentials != NULL) --s->credentials->users;
+    if (s->credentials != NULL) {
+        /* A zero reference count indicates broken ownership, not EOF. */
+        assert(s->credentials->users > 0);
+        --s->credentials->users;
+    }
     memset(s, 0, sizeof(*s));
     s->backend_fd = -1;
     connection_release(registry, connection);
@@ -201,11 +219,7 @@ static const unsigned char invalid_reply[] =
 
 static bool start_error_reply(int epfd, Connection *c, ProxySession *s, bool invalid)
 {
-    if (s->backend_fd >= 0) {
-        (void)epoll_ctl(epfd, EPOLL_CTL_DEL, s->backend_fd, NULL);
-        close(s->backend_fd);
-        s->backend_fd = -1;
-    }
+    close_upstream(epfd, s);
     const unsigned char *data = invalid ? invalid_reply : failure_reply;
     size_t length = invalid ? sizeof(invalid_reply) - 1 : sizeof(failure_reply) - 1;
     memcpy(s->response, data, length);
@@ -395,8 +409,8 @@ static void accept_clients(int epfd, int listener, TlsCredentials *credentials,
         s->stage = P_HANDSHAKE;
         s->active_at = time(NULL);
         s->credentials = credentials;
-    ++credentials->users;
-    s->ssl = SSL_new(credentials->primary);
+        ++credentials->users;
+        s->ssl = SSL_new(credentials->primary);
         if (s->ssl == NULL || SSL_set_fd(s->ssl, fd) != 1 ||
             watch_fd(epfd, EPOLL_CTL_ADD, fd, c->token, EPOLLIN) < 0) {
             close_client(epfd, registry, sessions, c);

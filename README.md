@@ -778,3 +778,41 @@ committed. Store **paths**, never private keys or passphrases, in config files.
 it does not re-read configuration or change ports. Keep the gateway bound
 to loopback; this remains an educational HTTP/1.1 GET-only proxy.
 The Phase 34 personal learning PDF stays outside the repository.
+
+## Phase 35: Resource ownership and failure-path regression
+
+The event-driven HTTPS proxy now uses one `close_upstream()` path for
+upstream socket cleanup during normal teardown and `400`/`502` failures.
+A `ProxySession` owns its `SSL *` and upstream fd; `ConnectionRegistry`
+own its accepted client fd; TLS credential generations are reference-counted
+until all sessions using them finish. The client teardown path unregisters
+fds from epoll, frees SSL, releases the credential reference, and closes the
+accepted socket. A debug assertion detects invalid credential refcounts.
+
+```bash
+make clean && make
+make test-resources                  # focused process-level cleanup tests
+make test                            # all Python regressions
+```
+
+The new Python test uses Linux `/proc/<pid>/fd` to ensure the descriptor
+count returns to baseline after interrupted handshakes, rejected mTLS
+clients, concurrent HTTPS requests, certificate reloads, and backend
+connection refusals. It also verifies SIGTERM and port reuse. It generates
+throwaway certificates and uses loopback-only ephemeral ports.
+
+To investigate descriptors manually, inspect `/proc/$(pgrep -n tls-gateway)/fd`
+or use `ls -l /proc/<PID>/fd` (replace `<PID>` with the actual process ID).
+For optional sanitizer exercises, build with matching compiler/linker flags:
+
+```bash
+make clean
+make CFLAGS='-std=c17 -Wall -Wextra -Wpedantic -Werror -g -O1 -fno-omit-frame-pointer -fsanitize=address,undefined' LDFLAGS='-fsanitize=address,undefined'
+make test-resources
+make clean && make
+```
+
+The sanitizer build is an **optional experiment**; `/proc` fd counts are
+not a substitute for heap-leak detection, and passing these tests does not
+prove the gateway is production-hardened. All learning PDFs are kept outside
+Git and are not part of this source ZIP.

@@ -232,3 +232,15 @@ verified TLS 1.3 HTTPS forwarding with and without mandatory mTLS. Both SNI
 hostnames are tested; an anonymous client must not reach the upstream in
 mTLS mode. No third-party Python library is required. All local ports are
 selected from the ephemeral range, and temporary keys/logs are removed.
+
+## Phase 35: resource-lifecycle checks
+
+`python3 tests/test_resource_cleanup.py` is a Linux-only, stdlib Python
+integration test. It creates temporary CA/server/client certificates,
+starts a config-driven SNI+mTLS proxy, and confirms ` /proc/<pid>/fd ` returns
+to its starting descriptor count after failed or successful sessions.
+It exercises interrupted handshakes, missing client certificates, concurrent
+HTTPS requests, repeated certificate reloads, missing backends, recovery,
+and SIGTERM cleanup. The test uses dynamic loopback ports and deletes its
+temporary keys and config file automatically. `make test-resources` runs only
+this slower resource regression; `make test` runs it with earlier tests.
