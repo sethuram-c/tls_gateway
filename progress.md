@@ -37,3 +37,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 33 - Reload validated TLS contexts on SIGHUP without dropping active sessions (2027-01-02)
 - [x] Phase 34 - Parse a minimal config file and launch validated HTTPS proxy modes (2027-01-03)
 - [x] Phase 35 - Consolidate backend socket cleanup and test descriptor lifetimes (2027-01-04)
+- [x] Phase 36 - Enforce monotonic per-stage TLS/client/backend inactivity limits (2027-01-05)

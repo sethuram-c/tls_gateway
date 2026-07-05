@@ -816,3 +816,34 @@ The sanitizer build is an **optional experiment**; `/proc` fd counts are
 not a substitute for heap-leak detection, and passing these tests does not
 prove the gateway is production-hardened. All learning PDFs are kept outside
 Git and are not part of this source ZIP.
+
+## Phase 36: monotonic connection timeouts (2027-01-05)
+
+The event-driven `--epoll-tls-proxy` and config-driven gateway enforce **idle**
+limits per stage using `CLOCK_MONOTONIC` rather than the system wall clock.
+The clock refreshes on successful reads/writes or a real state transition,
+not on `epoll` readiness alone.
+
+| Gateway stage | No-progress deadline | Result |
+|---|---:|---|
+| TLS handshake | 4 seconds | Close unauthenticated socket |
+| Authenticated HTTP request | 5 seconds | HTTP 408, then close |
+| Backend TCP connect | 4 seconds | HTTPS 504, then close |
+| Backend request send / response receive | 5 seconds | HTTPS 504 if response not begun; otherwise close |
+| TLS response write | 5 seconds | Close stalled receiver |
+
+These small values are deliberately chosen for a local educational lab, not
+production tuning. A timed-out upstream gets **504**, whereas an immediate
+connection failure still gets **502**. Once any response bytes have been sent,
+the gateway does not attempt to replace the HTTP status. This is a single-GET,
+connection-close-only learning proxy: it does not support persistent HTTP or
+request bodies.
+
+```bash
+make test-timeouts
+make test
+```
+
+The timeout test uses disposable CA and server certificates and a loopback
+Python backend; it does not put generated credentials in Git. The separate
+personal learning PDF is *not* part of this repository.

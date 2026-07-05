@@ -4,7 +4,7 @@ CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
 OBJECTS := build/gateway_config.o build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/epoll_tls_proxy.o build/sni_select.o build/mtls.o build/tls_credentials.o build/tls_state.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/backend_async.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
-.PHONY: all test test-resources clean certs certs-sni certs-client
+.PHONY: all test test-resources test-timeouts clean certs certs-sni certs-client
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) $(OBJECTS) -o $@ -lssl -lcrypto
@@ -111,9 +111,13 @@ test: $(TARGET)
 	python3 tests/test_cert_reload.py
 	python3 tests/test_gateway_config.py
 	python3 tests/test_resource_cleanup.py
+	python3 tests/test_connection_timeouts.py
 # Run the slower process-level leak/cleanup regression on demand.
 test-resources: $(TARGET)
 	python3 tests/test_resource_cleanup.py
+# Run the deadline/idle test on demand (about 20 seconds).
+test-timeouts: $(TARGET)
+	python3 tests/test_connection_timeouts.py
 certs:
 	bash scripts/generate_dev_certs.sh
 certs-sni:

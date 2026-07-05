@@ -27,7 +27,12 @@
  * fixed-size buffer is in flight. Streaming responses are NOT size-limited. */
 #define PROXY_BUFFER 8192U
 #define PROXY_EVENTS 32
-#define PROXY_TIMEOUT 15
+/* Milliseconds; small on purpose so Fedora labs finish quickly. */
+#define HANDSHAKE_TIMEOUT_MS UINT64_C(4000)
+#define REQUEST_IDLE_MS UINT64_C(5000)
+#define BACKEND_CONNECT_MS UINT64_C(4000)
+#define BACKEND_IDLE_MS UINT64_C(5000)
+#define TLS_WRITE_IDLE_MS UINT64_C(5000)
 #define BACKEND_MARK (UINT64_C(1) << 63)
 
 typedef enum {
@@ -40,14 +45,48 @@ typedef struct {
     TlsCredentials *credentials; /* keep SNI callback argument alive */
     int backend_fd;
     ProxyStage stage;
-    time_t active_at;
+    uint64_t progress_at_ms; /* CLOCK_MONOTONIC, refreshed by actual I/O */
     unsigned char request[PROXY_BUFFER];
     size_t request_len, request_sent;
     unsigned char response[PROXY_BUFFER];
     size_t response_len, response_sent;
     bool upstream_eof;
-    bool error_reply;
+    bool response_started; /* never replace a response after TLS writes */
 } ProxySession;
+
+/* A monotonic clock cannot jump backward due to wall-clock corrections. */
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * UINT64_C(1000) +
+           (uint64_t)ts.tv_nsec / UINT64_C(1000000);
+}
+
+static void made_progress(ProxySession *s)
+{
+    s->progress_at_ms = monotonic_ms();
+}
+
+static void change_stage(ProxySession *s, ProxyStage stage)
+{
+    s->stage = stage;
+    made_progress(s);
+}
+
+static uint64_t stage_limit_ms(ProxyStage stage)
+{
+    switch (stage) {
+    case P_HANDSHAKE: return HANDSHAKE_TIMEOUT_MS;
+    case P_REQUEST: return REQUEST_IDLE_MS;
+    case P_CONNECT: return BACKEND_CONNECT_MS;
+    case P_SEND_UPSTREAM:
+    case P_READ_UPSTREAM: return BACKEND_IDLE_MS;
+    case P_SEND_CLIENT: return TLS_WRITE_IDLE_MS;
+    case P_EMPTY: return 0;
+    }
+    return 0;
+}
 
 static volatile sig_atomic_t proxy_stop;
 static volatile sig_atomic_t proxy_reload;
@@ -217,17 +256,47 @@ static const unsigned char invalid_reply[] =
     "Connection: close\r\n\r\n"
     "bad request\n";
 
-static bool start_error_reply(int epfd, Connection *c, ProxySession *s, bool invalid)
+static const unsigned char request_timeout_reply[] =
+    "HTTP/1.1 408 Request Timeout\r\n"
+    "Content-Type: text/plain\r\n"
+    "Content-Length: 16\r\n"
+    "Connection: close\r\n\r\n"
+    "request timeout\n";
+static const unsigned char gateway_timeout_reply[] =
+    "HTTP/1.1 504 Gateway Timeout\r\n"
+    "Content-Type: text/plain\r\n"
+    "Content-Length: 16\r\n"
+    "Connection: close\r\n\r\n"
+    "gateway timeout\n";
+
+typedef enum {
+    REPLY_BAD_GATEWAY,
+    REPLY_BAD_REQUEST,
+    REPLY_REQUEST_TIMEOUT,
+    REPLY_GATEWAY_TIMEOUT
+} ErrorReply;
+
+static bool start_error_reply(int epfd, Connection *c, ProxySession *s,
+                              ErrorReply kind)
 {
     close_upstream(epfd, s);
-    const unsigned char *data = invalid ? invalid_reply : failure_reply;
-    size_t length = invalid ? sizeof(invalid_reply) - 1 : sizeof(failure_reply) - 1;
+    const unsigned char *data = failure_reply;
+    size_t length = sizeof(failure_reply) - 1;
+    if (kind == REPLY_BAD_REQUEST) {
+        data = invalid_reply;
+        length = sizeof(invalid_reply) - 1;
+    } else if (kind == REPLY_REQUEST_TIMEOUT) {
+        data = request_timeout_reply;
+        length = sizeof(request_timeout_reply) - 1;
+    } else if (kind == REPLY_GATEWAY_TIMEOUT) {
+        data = gateway_timeout_reply;
+        length = sizeof(gateway_timeout_reply) - 1;
+    }
     memcpy(s->response, data, length);
     s->response_len = length;
     s->response_sent = 0;
-    s->error_reply = true;
     s->upstream_eof = true;
-    s->stage = P_SEND_CLIENT;
+    change_stage(s, P_SEND_CLIENT);
     return client_interest(epfd, c, EPOLLOUT);
 }
 
@@ -236,11 +305,11 @@ static bool open_upstream(int epfd, Connection *c, ProxySession *s,
 {
     int fd = -1;
     int result = backend_async_start(backend_port, &fd);
-    if (result < 0) return start_error_reply(epfd, c, s, false);
+    if (result < 0) return start_error_reply(epfd, c, s, REPLY_BAD_GATEWAY);
     s->backend_fd = fd;
-    s->stage = result == 0 ? P_CONNECT : P_SEND_UPSTREAM;
+    change_stage(s, result == 0 ? P_CONNECT : P_SEND_UPSTREAM);
     if (watch_fd(epfd, EPOLL_CTL_ADD, fd, c->token | BACKEND_MARK,
-                 EPOLLOUT) < 0) return start_error_reply(epfd, c, s, false);
+                 EPOLLOUT) < 0) return start_error_reply(epfd, c, s, REPLY_BAD_GATEWAY);
     /* The client must not spin on buffered TLS data during upstream I/O. */
     return client_interest(epfd, c, 0);
 }
@@ -278,7 +347,6 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
                      unsigned short backend_port,
                      bool mtls_required)
 {
-    s->active_at = time(NULL);
     if (s->stage == P_HANDSHAKE) {
         int n = SSL_accept(s->ssl);
         if (n == 1) {
@@ -287,7 +355,7 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
             if (mtls_required && !mtls_peer_verified(s->ssl)) return false;
             if (mtls_required)
                 printf("mTLS client certificate verified: fd=%d\n", c->fd);
-            s->stage = P_REQUEST;
+            change_stage(s, P_REQUEST);
             log_requested_sni(s->ssl, s->credentials->alternate);
             printf("Non-blocking TLS handshake complete: fd=%d\n", c->fd);
         } else {
@@ -300,13 +368,14 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
     if (s->stage == P_REQUEST) {
         for (unsigned int attempt = 0; attempt < 16; ++attempt) {
             if (s->request_len == sizeof(s->request))
-                return start_error_reply(epfd, c, s, true);
+                return start_error_reply(epfd, c, s, REPLY_BAD_REQUEST);
             int n = SSL_read(s->ssl, s->request + s->request_len,
                              (int)(sizeof(s->request) - s->request_len));
             if (n > 0) {
                 s->request_len += (size_t)n;
+                made_progress(s);
                 int ready = request_complete(s);
-                if (ready < 0) return start_error_reply(epfd, c, s, true);
+                if (ready < 0) return start_error_reply(epfd, c, s, REPLY_BAD_REQUEST);
                 if (ready == 1) {
                     printf("Forwarding HTTPS GET: client_fd=%d request_bytes=%zu\n",
                            c->fd, s->request_len);
@@ -326,7 +395,7 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
         for (unsigned int attempt = 0; attempt < 16; ++attempt) {
             if (s->response_sent == s->response_len) {
                 if (s->upstream_eof) return false;
-                s->stage = P_READ_UPSTREAM;
+                change_stage(s, P_READ_UPSTREAM);
                 s->response_len = s->response_sent = 0;
                 if (!upstream_interest(epfd, c, s, EPOLLIN)) return false;
                 return client_interest(epfd, c, 0);
@@ -335,6 +404,8 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
                               (int)(s->response_len - s->response_sent));
             if (n > 0) {
                 s->response_sent += (size_t)n;
+                s->response_started = true;
+                made_progress(s);
                 continue;
             }
             int err = SSL_get_error(s->ssl, n);
@@ -349,25 +420,24 @@ static bool tls_step(int epfd, Connection *c, ProxySession *s,
 
 static bool backend_step(int epfd, Connection *c, ProxySession *s)
 {
-    s->active_at = time(NULL);
     if (s->stage == P_CONNECT) {
         if (backend_async_complete(s->backend_fd) < 0)
-            return start_error_reply(epfd, c, s, false);
-        s->stage = P_SEND_UPSTREAM;
+            return start_error_reply(epfd, c, s, REPLY_BAD_GATEWAY);
+        change_stage(s, P_SEND_UPSTREAM);
     }
     if (s->stage == P_SEND_UPSTREAM) {
         for (unsigned int attempt = 0; attempt < 16; ++attempt) {
             if (s->request_sent == s->request_len) {
-                s->stage = P_READ_UPSTREAM;
+                change_stage(s, P_READ_UPSTREAM);
                 return upstream_interest(epfd, c, s, EPOLLIN);
             }
             ssize_t n = send(s->backend_fd, s->request + s->request_sent,
                              s->request_len - s->request_sent, MSG_NOSIGNAL);
-            if (n > 0) { s->request_sent += (size_t)n; continue; }
+            if (n > 0) { s->request_sent += (size_t)n; made_progress(s); continue; }
             if (n < 0 && errno == EINTR) continue;
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
                 return upstream_interest(epfd, c, s, EPOLLOUT);
-            return start_error_reply(epfd, c, s, false);
+            return start_error_reply(epfd, c, s, REPLY_BAD_GATEWAY);
         }
         return upstream_interest(epfd, c, s, EPOLLOUT);
     }
@@ -375,8 +445,9 @@ static bool backend_step(int epfd, Connection *c, ProxySession *s)
         ssize_t n = recv(s->backend_fd, s->response, sizeof(s->response), 0);
         if (n > 0) {
             s->response_len = (size_t)n;
+            made_progress(s);
             s->response_sent = 0;
-            s->stage = P_SEND_CLIENT;
+            change_stage(s, P_SEND_CLIENT);
             /* Pause backend reads until SSL_write drains this response chunk. */
             return upstream_interest(epfd, c, s, 0) &&
                    client_interest(epfd, c, EPOLLOUT);
@@ -406,8 +477,7 @@ static void accept_clients(int epfd, int listener, TlsCredentials *credentials,
         ProxySession *s = &sessions[session_slot(c)];
         memset(s, 0, sizeof(*s));
         s->backend_fd = -1;
-        s->stage = P_HANDSHAKE;
-        s->active_at = time(NULL);
+        change_stage(s, P_HANDSHAKE);
         s->credentials = credentials;
         ++credentials->users;
         s->ssl = SSL_new(credentials->primary);
@@ -504,14 +574,32 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
             }
             if (!ok) close_client(epfd, &registry, sessions, c);
         }
-        time_t now = time(NULL);
-        if (now != (time_t)-1) {
+        /* A deadline expires only when no useful I/O progress occurred;
+         * a socket that repeatedly reports readiness cannot avoid it. */
+        uint64_t now = monotonic_ms();
+        if (now != 0) {
             for (size_t i = 0; i < CONNECTION_CAPACITY; ++i) {
                 Connection *c = &registry.slots[i];
                 if (c->state != CONN_OPEN) continue;
-                if (sessions[i].active_at != (time_t)-1 &&
-                    now - sessions[i].active_at >= PROXY_TIMEOUT)
-                    close_client(epfd, &registry, sessions, c);
+                ProxySession *s = &sessions[i];
+                uint64_t limit = stage_limit_ms(s->stage);
+                if (limit == 0 || s->progress_at_ms == 0 ||
+                    now < s->progress_at_ms ||
+                    now - s->progress_at_ms < limit) continue;
+                fprintf(stderr, "TLS proxy timeout: fd=%d stage=%d\n",
+                        c->fd, (int)s->stage);
+                bool reply = false;
+                if (s->stage == P_REQUEST) {
+                    reply = start_error_reply(epfd, c, s, REPLY_REQUEST_TIMEOUT);
+                } else if ((s->stage == P_CONNECT ||
+                            s->stage == P_SEND_UPSTREAM ||
+                            s->stage == P_READ_UPSTREAM) &&
+                           !s->response_started) {
+                    reply = start_error_reply(epfd, c, s, REPLY_GATEWAY_TIMEOUT);
+                }
+                /* Handshake timeout: no HTTP possible.  Mid-response or
+                 * blocked client write: closing is safer than rewriting it. */
+                if (!reply) close_client(epfd, &registry, sessions, c);
             }
         }
     }

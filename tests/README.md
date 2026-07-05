@@ -244,3 +244,12 @@ HTTPS requests, repeated certificate reloads, missing backends, recovery,
 and SIGTERM cleanup. The test uses dynamic loopback ports and deletes its
 temporary keys and config file automatically. `make test-resources` runs only
 this slower resource regression; `make test` runs it with earlier tests.
+
+## Phase 36 - stage-specific timeout regression
+
+Run `make test-timeouts` (or `python3 tests/test_connection_timeouts.py`).
+It deliberately holds TLS handshakes, HTTP requests and upstream replies to
+verify 408/504 handling, close-after-partial-response, and unaffected healthy
+clients. It takes approximately 20 seconds because it tests real deadlines.
+Python's standard library is the only test dependency. No generated keys are
+committed.
