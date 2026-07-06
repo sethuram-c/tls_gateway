@@ -253,3 +253,17 @@ verify 408/504 handling, close-after-partial-response, and unaffected healthy
 clients. It takes approximately 20 seconds because it tests real deadlines.
 Python's standard library is the only test dependency. No generated keys are
 committed.
+
+## Phase 37: graceful termination
+
+`python3 tests/test_graceful_shutdown.py` (or `make test-drain`) starts a
+loopback TLS gateway and an instrumented Python backend. It verifies:
+
+- `SIGTERM` immediately removes the listening socket, but finishes a request
+  already waiting on the backend.
+- A backend that never replies is cut off by the four-second process-wide
+  drain deadline; no incorrect HTTP error is injected mid-stream.
+- The listening port is reusable and `SIGINT` exits promptly without clients.
+
+The test generates disposable development certificates and does not modify
+real `certs/` or rely on global services. Run `make test` for regressions.

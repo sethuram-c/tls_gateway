@@ -33,6 +33,8 @@
 #define BACKEND_CONNECT_MS UINT64_C(4000)
 #define BACKEND_IDLE_MS UINT64_C(5000)
 #define TLS_WRITE_IDLE_MS UINT64_C(5000)
+/* Maximum time to finish already accepted requests after SIGINT/SIGTERM. */
+#define SHUTDOWN_GRACE_MS UINT64_C(4000)
 #define BACKEND_MARK (UINT64_C(1) << 63)
 
 typedef enum {
@@ -463,6 +465,7 @@ static void accept_clients(int epfd, int listener, TlsCredentials *credentials,
                            ConnectionRegistry *registry, ProxySession *sessions)
 {
     for (;;) {
+        if (proxy_stop) return; /* Do not accept after a shutdown signal. */
         struct sockaddr_in peer = {0};
         socklen_t len = sizeof(peer);
         int fd = accept4(listener, (struct sockaddr *)&peer, &len,
@@ -488,6 +491,31 @@ static void accept_clients(int epfd, int listener, TlsCredentials *credentials,
         }
         SSL_set_accept_state(s->ssl);
     }
+}
+
+/* Only the main event loop closes the listener.  Signal handlers only set
+ * sig_atomic_t flags; epoll and close are never called from a handler. */
+static void begin_shutdown(int epfd, int *listener, bool *draining,
+                           uint64_t *drain_started_ms)
+{
+    if (!proxy_stop || *draining) return;
+    *draining = true;
+    *drain_started_ms = monotonic_ms();
+    if (*listener >= 0) {
+        (void)epoll_ctl(epfd, EPOLL_CTL_DEL, *listener, NULL);
+        (void)close(*listener);
+        *listener = -1;
+    }
+    printf("TLS proxy draining: listener closed; grace=%llu ms\n",
+           (unsigned long long)SHUTDOWN_GRACE_MS);
+}
+
+static size_t active_clients(const ConnectionRegistry *registry)
+{
+    size_t active = 0;
+    for (size_t i = 0; i < CONNECTION_CAPACITY; ++i)
+        if (registry->slots[i].state == CONN_OPEN) ++active;
+    return active;
 }
 
 int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_path,
@@ -522,10 +550,13 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
            tls_port, backend_port);
     if (client_ca_path != NULL) puts("mTLS mode: client certificate required");
     status = 0;
-    while (!proxy_stop) {
+    bool draining = false;
+    uint64_t drain_started_ms = 0;
+    for (;;) {
+        begin_shutdown(epfd, &listener, &draining, &drain_started_ms);
         /* A signal handler sets only a flag. Disk I/O and OpenSSL run here.
          * No old context is released until all its accepted clients close. */
-        if (proxy_reload) {
+        if (proxy_reload && !draining) {
             proxy_reload = 0;
             TlsCredentials *candidate = tls_credentials_load(
                 certificate_path, private_key_path, api_certificate_path,
@@ -550,10 +581,14 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
             status = 1;
             break;
         }
-        for (int i = 0; i < count && !proxy_stop; ++i) {
+        /* A signal may arrive during epoll_wait: disable acceptance before
+         * dispatching any listener event in this batch. */
+        begin_shutdown(epfd, &listener, &draining, &drain_started_ms);
+        for (int i = 0; i < count; ++i) {
             uint64_t tag = events[i].data.u64;
             if (tag == 0) {
-                accept_clients(epfd, listener, current, &registry, sessions);
+                if (!draining && !proxy_stop && listener >= 0)
+                    accept_clients(epfd, listener, current, &registry, sessions);
                 continue;
             }
             bool from_backend = (tag & BACKEND_MARK) != 0;
@@ -600,6 +635,22 @@ int run_epoll_tls_proxy(const char *certificate_path, const char *private_key_pa
                 /* Handshake timeout: no HTTP possible.  Mid-response or
                  * blocked client write: closing is safer than rewriting it. */
                 if (!reply) close_client(epfd, &registry, sessions, c);
+            }
+        }
+        /* Keep servicing accepted clients, but only until the shared grace
+         * deadline.  Expired sessions use the normal ownership cleanup. */
+        if (draining) {
+            size_t remaining = active_clients(&registry);
+            if (remaining == 0) {
+                puts("TLS proxy drain complete: no active clients");
+                break;
+            }
+            uint64_t now_drain = monotonic_ms();
+            if (now_drain == 0 || now_drain < drain_started_ms ||
+                now_drain - drain_started_ms >= SHUTDOWN_GRACE_MS) {
+                printf("TLS proxy drain deadline reached: closing %zu clients\n",
+                       remaining);
+                break;
             }
         }
     }

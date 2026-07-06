@@ -847,3 +847,33 @@ make test
 The timeout test uses disposable CA and server certificates and a loopback
 Python backend; it does not put generated credentials in Git. The separate
 personal learning PDF is *not* part of this repository.
+
+## Phase 37: graceful shutdown and bounded connection draining (2027-01-06)
+
+The event-driven HTTPS proxy (`--epoll-tls-proxy`, `--epoll-tls-proxy-mtls`,
+and `--config`) now handles `SIGTERM` and `SIGINT` by **closing the listener
+first**, then servicing existing client/backend sockets for a shared **4-second
+shutdown grace period**. If no sessions remain, it exits immediately. On grace
+expiry it tears down any remaining sessions using the existing cleanup path.
+The handler itself only sets a `sig_atomic_t` flag; socket and OpenSSL work
+happens in the main event loop. Signals no longer immediately abort accepted
+requests. New TCP connections are refused once draining begins.
+
+```bash
+make test-drain             # focused graceful-shutdown tests (~5 seconds)
+make test                   # full regression suite
+# Terminal A: python3 tests/http_backend.py
+# Terminal B: ./build/tls-gateway --config gateway.conf
+# Terminal C: pgrep -af tls-gateway
+# Terminal C: kill -TERM <gateway-pid>
+# Terminal C: ss -ltnp '( sport = :18444 )' # listener disappears
+```
+
+Expected logs include `TLS proxy draining: listener closed; grace=4000 ms`,
+followed by either `TLS proxy drain complete: no active clients` or
+`TLS proxy drain deadline reached: closing N clients`. Already-accepted
+requests may finish during the grace interval; no new clients are accepted.
+This is a process-local, in-memory shutdown policy, not multi-process
+zero-downtime deployment or HTTP keep-alive draining. It does not override the
+normal per-stage idle deadlines from Phase 36. The separate Phase 37 learning
+PDF remains outside the repository.
