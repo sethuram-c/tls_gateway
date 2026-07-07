@@ -877,3 +877,26 @@ This is a process-local, in-memory shutdown policy, not multi-process
 zero-downtime deployment or HTTP keep-alive draining. It does not override the
 normal per-stage idle deadlines from Phase 36. The separate Phase 37 learning
 PDF remains outside the repository.
+
+## Phase 38: reproducible Python integration test runner
+
+`make test` runs a small runner self-test, then executes `smoke_test.py` and
+all `tests/test_*.py` files in filename order. No third-party Python package
+is needed. Individual test scripts run in separate process groups, so a
+hanging test times out and its child backend/gateway processes are stopped.
+A test failure makes `make test` return a nonzero exit code.
+
+```bash
+make test-list                            # inspect discovered scripts
+make test-runner                          # test the runner itself
+make test-smoke                           # fast smoke test
+python3 tests/run_tests.py --match mtls   # focused regression subset
+python3 tests/run_tests.py --repeat 2 --match epoll_tls_proxy
+python3 tests/run_tests.py --timeout 120  # full suite; 120s per test
+make test                                 # standard regression command
+```
+
+Output reports each script's result and duration, then a summary. A failure
+prints the last 50 lines of captured output. The default 90-second **per-script**
+limit is a guard, not a performance target. Do not assume tests passing on
+loopback proves the gateway is secure for public internet deployment.

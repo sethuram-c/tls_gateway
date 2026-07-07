@@ -4,7 +4,7 @@ CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
 OBJECTS := build/gateway_config.o build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/epoll_tls_proxy.o build/sni_select.o build/mtls.o build/tls_credentials.o build/tls_state.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/backend_async.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
-.PHONY: all test test-resources test-timeouts test-drain clean certs certs-sni certs-client
+.PHONY: all test test-list test-runner test-smoke test-resources test-timeouts test-drain clean certs certs-sni certs-client
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) $(OBJECTS) -o $@ -lssl -lcrypto
@@ -77,42 +77,17 @@ build/tls_forward.o: src/tls_forward.c include/tls_forward.h
 build/tls_context.o: src/tls_context.c include/tls_context.h
 	@mkdir -p build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+# Integration runner discovers smoke_test.py and all test_*.py scripts.
+# Each script runs in an isolated process group with a per-test deadline.
 test: $(TARGET)
-	python3 tests/smoke_test.py
-	python3 tests/test_tcp_server.py
-	python3 tests/test_http_backend.py
-	python3 tests/test_backend_connect.py
-	python3 tests/test_tcp_proxy.py
-	python3 tests/test_tls_handshake.py
-	python3 tests/test_certificates.py
-	python3 tests/test_tls_context.py
-	python3 tests/test_tls_listener.py
-	python3 tests/test_tls_read.py
-	python3 tests/test_tls_write.py
-	python3 tests/test_tls_proxy.py
-	python3 tests/test_nonblock_demo.py
-	python3 tests/test_socket_flags.py
-	python3 tests/test_epoll_demo.py
-	python3 tests/test_epoll_server.py
-	python3 tests/test_connection_registry.py
-	python3 tests/test_epoll_tls.py
-	python3 tests/test_epoll_tls_read.py
-	python3 tests/test_output_buffer.py
-	python3 tests/test_epoll_tls_write.py
-	python3 tests/test_tls_state.py
-	python3 tests/test_epoll_backend.py
-	python3 tests/test_epoll_tls_proxy.py
-	python3 tests/test_sni_observation.py
-	python3 tests/test_sni_selection.py
-	python3 tests/test_sni_security.py
-	python3 tests/test_mtls_fundamentals.py
-	python3 tests/test_mtls_gateway.py
-	python3 tests/test_mtls_rejections.py
-	python3 tests/test_cert_reload.py
-	python3 tests/test_gateway_config.py
-	python3 tests/test_resource_cleanup.py
-	python3 tests/test_connection_timeouts.py
-	python3 tests/test_graceful_shutdown.py
+	python3 tests/verify_test_runner.py
+	python3 tests/run_tests.py
+test-list:
+	python3 tests/run_tests.py --list
+test-runner:
+	python3 tests/verify_test_runner.py
+test-smoke: $(TARGET)
+	python3 tests/run_tests.py --match smoke
 # Run the slower process-level leak/cleanup regression on demand.
 test-resources: $(TARGET)
 	python3 tests/test_resource_cleanup.py

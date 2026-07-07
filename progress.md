@@ -39,3 +39,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 35 - Consolidate backend socket cleanup and test descriptor lifetimes (2027-01-04)
 - [x] Phase 36 - Enforce monotonic per-stage TLS/client/backend inactivity limits (2027-01-05)
 - [x] Phase 37 - Stop acceptance and drain active TLS sessions on SIGTERM/SIGINT (2027-01-06)
+- [x] Phase 38 - Consolidate Python regression runner and isolate test subprocesses (2027-01-07)

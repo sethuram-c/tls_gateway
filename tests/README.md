@@ -267,3 +267,20 @@ loopback TLS gateway and an instrumented Python backend. It verifies:
 
 The test generates disposable development certificates and does not modify
 real `certs/` or rely on global services. Run `make test` for regressions.
+
+
+## Phase 38: standardized subprocess test runner
+
+`tests/run_tests.py` automatically discovers `smoke_test.py` followed by the
+alphabetically ordered `test_*.py` files. Helpers like `http_backend.py` and
+`verify_test_runner.py` are intentionally **not** auto-discovered. Each script
+runs in a new process session with a 90-second default deadline; if it hangs,
+the whole test process group is killed. Leftover child services sharing the
+group are terminated between scripts. A failure produces nonzero exit status.
+
+Commands: `make test-list`, `make test-smoke`, `make test-runner`, `make test`.
+For focused or repeated tests: `python3 tests/run_tests.py --match tls_proxy
+--repeat 3`; for faster diagnosis: add `--fail-fast`. The runner uses no
+external Python dependencies. It does not run tests in parallel because
+port-based integration tests and process cleanup are easiest to understand
+when run sequentially.
