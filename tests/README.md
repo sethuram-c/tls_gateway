@@ -284,3 +284,14 @@ For focused or repeated tests: `python3 tests/run_tests.py --match tls_proxy
 external Python dependencies. It does not run tests in parallel because
 port-based integration tests and process cleanup are easiest to understand
 when run sequentially.
+
+
+## Phase 39: malformed HTTP and failure injection
+
+Run `make test-edge` (or `python3 tests/test_failure_injection.py`) to exercise:
+15 rejected request shapes with zero upstream TCP connections, valid split
+headers, early TLS disconnects, stalled ClientHello fairness, delayed upstream
+concurrency, and a disconnect during response streaming. Only Python stdlib is
+used; temporary CA keys are deleted; test processes terminate on exit.
+Run `make test` afterward. Expected status: **400** for unsupported request
+framing; no upstream connection; **200** for valid GET; no gateway crash/leak.

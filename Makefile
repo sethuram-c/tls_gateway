@@ -4,7 +4,7 @@ CPPFLAGS := -Iinclude
 TARGET := build/tls-gateway
 OBJECTS := build/gateway_config.o build/main.o build/log.o build/socket_demo.o build/nonblock_demo.o build/socket_flags.o build/epoll_demo.o build/epoll_server.o build/epoll_tls.o build/epoll_tls_proxy.o build/sni_select.o build/mtls.o build/tls_credentials.o build/tls_state.o build/output_buffer.o build/connection.o build/tcp_server.o build/backend_connect.o build/backend_async.o build/tcp_proxy.o build/tls_context.o build/tls_listener.o build/tls_forward.o
 
-.PHONY: all test test-list test-runner test-smoke test-resources test-timeouts test-drain clean certs certs-sni certs-client
+.PHONY: all test test-list test-runner test-smoke test-resources test-timeouts test-drain test-edge clean certs certs-sni certs-client
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) $(OBJECTS) -o $@ -lssl -lcrypto
@@ -104,3 +104,6 @@ certs-client:
 	bash scripts/generate_client_cert.sh
 clean:
 	rm -rf build
+# Phase 39: malformed HTTP, disconnect, and slow-backend failure injection.
+test-edge: $(TARGET)
+	python3 tests/test_failure_injection.py

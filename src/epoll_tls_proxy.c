@@ -197,46 +197,101 @@ static bool upstream_interest(int epfd, const Connection *c,
                     c->token | BACKEND_MARK, mask) == 0;
 }
 
-/* Use an explicit Connection: close upstream so the HTTP/1.1 backend gives
- * us a reliable response boundary (EOF). This simple lab rejects methods
- * other than GET and does not support request bodies, pipelines, or upgrades. */
+/* Deliberately small HTTP/1.1 parser: one GET, no bodies or pipelining.
+ * Parse only a complete header block; never forward ambiguous request framing.
+ * This is NOT a general-purpose HTTP parser or an HTTP/2 implementation. */
+static bool header_token(unsigned char ch)
+{
+    if (ch == 0) return false; /* strchr(s, 0) otherwise matches terminator. */
+    return (ch >= 'A' && ch <= 'Z') ||
+           (ch >= 'a' && ch <= 'z') ||
+           (ch >= '0' && ch <= '9') ||
+           strchr("!#$%&'*+-.^_`|~", (int)ch) != NULL;
+}
+
+static bool header_name_is(const unsigned char *data, size_t length,
+                           const char *name)
+{
+    return strlen(name) == length &&
+           strncasecmp((const char *)data, name, length) == 0;
+}
+
 static int request_complete(ProxySession *s)
 {
-    const unsigned char *end = NULL;
+    size_t end = 0;
+    bool found = false;
     for (size_t i = 0; i + 3 < s->request_len; ++i) {
         if (memcmp(s->request + i, "\r\n\r\n", 4) == 0) {
-            end = s->request + i;
+            end = i;
+            found = true;
             break;
         }
     }
-    if (end == NULL) return 0;
-    /* Reject bodies/pipelining and non-GET methods rather than risk truncation. */
-    if (s->request_len != (size_t)(end - s->request) + 4 ||
-        s->request_len < 14 || memcmp(s->request, "GET ", 4) != 0)
+    if (!found) return 0;
+    /* A second request or a body in the same read is not supported. */
+    if (end + 4 != s->request_len) return -1;
+
+    size_t first_end = 0;
+    while (first_end + 1 < s->request_len &&
+           memcmp(s->request + first_end, "\r\n", 2) != 0)
+        ++first_end;
+    if (first_end + 1 >= s->request_len || first_end < 14 ||
+        memcmp(s->request, "GET /", 5) != 0 ||
+        memcmp(s->request + first_end - 9, " HTTP/1.1", 9) != 0)
         return -1;
-    size_t line_end = 0;
-    while (line_end + 1 < s->request_len &&
-           memcmp(s->request + line_end, "\r\n", 2) != 0) ++line_end;
-    if (line_end + 1 >= s->request_len ||
-        line_end < 9 || memcmp(s->request + line_end - 9, " HTTP/1.1", 9) != 0)
-        return -1;
-    /* Respect an explicit Connection: close. Reject other Connection
-     * values (including keep-alive) instead of forwarding contradictory
-     * hop-by-hop headers; adding a second header would be ambiguous. */
-    for (size_t i = line_end + 2; i + 11 < s->request_len; ++i) {
-        if (strncasecmp((const char *)s->request + i, "Connection:", 11) == 0 &&
-            (i == line_end + 2 || (i >= 2 && memcmp(s->request + i - 2, "\r\n", 2) == 0))) {
-            size_t value = i + 11;
-            while (value < s->request_len &&
-                   (s->request[value] == ' ' || s->request[value] == '\t')) ++value;
-            if (value + 7 <= s->request_len &&
-                strncasecmp((const char *)s->request + value, "close", 5) == 0 &&
-                memcmp(s->request + value + 5, "\r\n", 2) == 0) return 1;
+    /* The request target must not contain embedded whitespace or controls. */
+    for (size_t i = 4; i < first_end - 9; ++i) {
+        if (s->request[i] <= ' ' || s->request[i] == 127) return -1;
+    }
+
+    bool host_seen = false;
+    bool connection_seen = false;
+    size_t position = first_end + 2;
+    while (position < end) {
+        size_t line_end = position;
+        while (line_end + 1 < s->request_len &&
+               memcmp(s->request + line_end, "\r\n", 2) != 0)
+            ++line_end;
+        if (line_end > end) return -1;
+        size_t colon = position;
+        while (colon < line_end && s->request[colon] != ':') {
+            if (!header_token(s->request[colon])) return -1;
+            ++colon;
+        }
+        if (colon == position || colon == line_end) return -1;
+        size_t value = colon + 1;
+        while (value < line_end &&
+               (s->request[value] == ' ' || s->request[value] == '\t'))
+            ++value;
+        /* Disallow line folding, NULs, and control characters. */
+        for (size_t i = value; i < line_end; ++i) {
+            unsigned char ch = s->request[i];
+            if ((ch < 32 && ch != '\t') || ch == 127) return -1;
+        }
+        size_t name_len = colon - position;
+        if (header_name_is(s->request + position, name_len, "Host")) {
+            if (host_seen || value == line_end) return -1;
+            host_seen = true;
+        } else if (header_name_is(s->request + position, name_len, "Connection")) {
+            if (connection_seen || line_end - value != 5 ||
+                strncasecmp((const char *)s->request + value, "close", 5) != 0)
+                return -1;
+            connection_seen = true;
+        } else if (header_name_is(s->request + position, name_len, "Content-Length") ||
+                   header_name_is(s->request + position, name_len, "Transfer-Encoding") ||
+                   header_name_is(s->request + position, name_len, "Expect") ||
+                   header_name_is(s->request + position, name_len, "Upgrade")) {
+            /* Even Content-Length: 0 is excluded to prevent framing ambiguity. */
             return -1;
         }
+        position = line_end + 2;
     }
+    if (!host_seen) return -1; /* HTTP/1.1 requires a Host header. */
+    if (connection_seen) return 1;
+
+    /* Force EOF-delimited HTTP/1.1 upstream replies for this one-shot proxy. */
     static const char forced[] = "Connection: close\r\n";
-    size_t insert = line_end + 2;
+    size_t insert = first_end + 2;
     if (s->request_len + sizeof(forced) - 1 > sizeof(s->request)) return -1;
     memmove(s->request + insert + sizeof(forced) - 1,
             s->request + insert, s->request_len - insert);

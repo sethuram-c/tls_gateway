@@ -900,3 +900,35 @@ Output reports each script's result and duration, then a summary. A failure
 prints the last 50 lines of captured output. The default 90-second **per-script**
 limit is a guard, not a performance target. Do not assume tests passing on
 loopback proves the gateway is secure for public internet deployment.
+
+
+## Phase 39: deliberate HTTP failure injection and recovery
+
+The epoll TLS proxy remains a deliberately narrow **one-request HTTP/1.1 GET**
+implementation. Its request validator now rejects malformed header syntax,
+missing/duplicate `Host`, unsupported request methods and targets, duplicate or
+non-`close` `Connection`, and all `Content-Length`, `Transfer-Encoding`,
+`Expect`, or `Upgrade` headers. These are **HTTP 400**, before opening a backend
+socket. We reject even otherwise legal `Content-Length: 0` because the project
+has no request-body framing logic; this is a documented subset, not a complete
+RFC-compliant general-purpose HTTP reverse proxy. Header bytes are bounded to
+8 KiB; one request per connection; only origin-form paths beginning with `/`.
+
+```bash
+make clean && make
+make test-edge                                       # focused failure injection
+python3 tests/run_tests.py --match failure_injection --repeat 3
+make test                                            # full suite
+```
+
+`tests/test_failure_injection.py` generates temporary certificates, runs the
+compiled gateway and a counted Python backend, and proves 15 malformed request
+cases never reach upstream. It also tests TLS fragmentation, 24 early exits,
+a stalled handshake, slow-upstream concurrency and a mid-response disconnect.
+Checks use `/proc/PID/fd`, which is Linux-specific. All services bind loopback,
+use ephemeral ports, and are terminated by the test cleanup block.
+
+**Limitations:** These checks cover malformed data fully received in one TLS
+application read; they are not an HTTP/1.1 request-smuggling certification or a
+public-internet security audit. HTTP bodies, keep-alive, HTTP/2 and trailers
+remain unsupported. The personal Phase 39 PDF is **not** part of this repo.
