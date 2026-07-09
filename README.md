@@ -932,3 +932,22 @@ use ephemeral ports, and are terminated by the test cleanup block.
 application read; they are not an HTTP/1.1 request-smuggling certification or a
 public-internet security audit. HTTP bodies, keep-alive, HTTP/2 and trailers
 remain unsupported. The personal Phase 39 PDF is **not** part of this repo.
+
+
+## Phase 40 - debugger and sanitizers (Fedora)
+
+Use `make debug` for the ordinary `-g` executable, and inspect it with
+`gdb --args ./build/tls-gateway --help`. For memory-safety checks run
+`make asan` (AddressSanitizer) and `make ubsan` (UndefinedBehaviorSanitizer).
+These produce `build-asan/tls-gateway` and `build-ubsan/tls-gateway`; the
+normal `build/tls-gateway` and its regression tests are untouched.
+
+Run `make test-sanitize` for instrumented HTTPS smoke checks against a
+local disposable CA, Python HTTP backend, and gateway. ASan diagnoses
+memory errors such as use-after-free and buffer overflows; UBSan diagnoses
+certain undefined C operations, such as signed integer overflow. Neither
+proves the program is free of vulnerabilities, data races, or memory leaks.
+Investigate the first sanitizer report rather than suppressing it. For an
+ordinary regression run use `make test` (normal build, no instrumentation).
+
+The optional debugging guide is a personal PDF outside the repository.

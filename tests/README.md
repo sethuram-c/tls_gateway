@@ -295,3 +295,14 @@ concurrency, and a disconnect during response streaming. Only Python stdlib is
 used; temporary CA keys are deleted; test processes terminate on exit.
 Run `make test` afterward. Expected status: **400** for unsupported request
 framing; no upstream connection; **200** for valid GET; no gateway crash/leak.
+
+
+## Phase 40 - instrumented builds
+
+`make asan` and `make ubsan` compile the complete C gateway into independent
+`build-asan/` and `build-ubsan/` directories; `make test-sanitize` runs both
+through `tests/verify_sanitizers.py`. The smoke test makes disposable certs,
+starts the Python backend and the C TLS proxy, verifies HTTPS `/health`,
+several repeated requests and HTTP 502 with the upstream absent, and ensures
+normal SIGTERM shutdown. It verifies ASan/UBSan exit status and treats runtime
+reports as failures. No certificates, binaries, or learning PDF are committed.
