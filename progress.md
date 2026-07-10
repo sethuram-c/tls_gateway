@@ -42,3 +42,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 38 - Consolidate Python regression runner and isolate test subprocesses (2027-01-07)
 - [x] Phase 39 - Reject ambiguous HTTP framing and inject connection failures (2027-01-08)
 - [x] Phase 40 - GDB, ASan and UBSan isolated builds and instrumented HTTPS smoke tests (2027-01-09)
+- [x] Phase 41 - Reproducible verified HTTPS throughput and latency baseline (2027-01-10)

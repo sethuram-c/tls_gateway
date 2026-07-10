@@ -306,3 +306,12 @@ starts the Python backend and the C TLS proxy, verifies HTTPS `/health`,
 several repeated requests and HTTP 502 with the upstream absent, and ensures
 normal SIGTERM shutdown. It verifies ASan/UBSan exit status and treats runtime
 reports as failures. No certificates, binaries, or learning PDF are committed.
+
+
+## Phase 41: benchmark test
+
+`make test-bench` starts a temporary CA, backend, and C TLS gateway, then
+runs `bench/https_bench.py` (24 verified requests, concurrency 4). It checks
+that the JSON stats and latency percentiles are coherent and that incorrect
+response bodies or a missing CA fail closed. Normal `make test` discovers this
+test too. Raw benchmark results belong in ignored `bench_results/`, not Git.

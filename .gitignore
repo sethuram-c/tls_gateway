@@ -17,3 +17,12 @@ certs/
 __pycache__/
 .pytest_cache/
 *.pyc
+*.crt
+*.csr
+*.srl
+
+# Local runtime configuration (may use machine-specific paths)
+/gateway.conf
+
+# Local benchmark numbers are environment-specific
+/bench_results/

@@ -5,7 +5,7 @@ BUILD_DIR ?= build
 TARGET := $(BUILD_DIR)/tls-gateway
 OBJECTS := $(BUILD_DIR)/gateway_config.o $(BUILD_DIR)/main.o $(BUILD_DIR)/log.o $(BUILD_DIR)/socket_demo.o $(BUILD_DIR)/nonblock_demo.o $(BUILD_DIR)/socket_flags.o $(BUILD_DIR)/epoll_demo.o $(BUILD_DIR)/epoll_server.o $(BUILD_DIR)/epoll_tls.o $(BUILD_DIR)/epoll_tls_proxy.o $(BUILD_DIR)/sni_select.o $(BUILD_DIR)/mtls.o $(BUILD_DIR)/tls_credentials.o $(BUILD_DIR)/tls_state.o $(BUILD_DIR)/output_buffer.o $(BUILD_DIR)/connection.o $(BUILD_DIR)/tcp_server.o $(BUILD_DIR)/backend_connect.o $(BUILD_DIR)/backend_async.o $(BUILD_DIR)/tcp_proxy.o $(BUILD_DIR)/tls_context.o $(BUILD_DIR)/tls_listener.o $(BUILD_DIR)/tls_forward.o
 
-.PHONY: all debug asan ubsan test-sanitize test test-list test-runner test-smoke test-resources test-timeouts test-drain test-edge clean certs certs-sni certs-client
+.PHONY: all debug asan ubsan test-sanitize test test-list test-runner test-smoke test-resources test-timeouts test-drain test-edge test-bench bench clean certs certs-sni certs-client
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) $(OBJECTS) -o $@ -lssl -lcrypto
@@ -126,3 +126,12 @@ ubsan:
 
 test-sanitize: asan ubsan
 	python3 tests/verify_sanitizers.py
+
+# Phase 41: benchmark uses verified TLS 1.3 against a running LOCAL gateway.
+# Start tests/http_backend.py and --epoll-tls-proxy separately first.
+# Machine-specific measurements are ignored by Git.
+bench: $(TARGET)
+	python3 bench/https_bench.py --ca certs/ca.crt --port 18444 --requests 200 --concurrency 4 --warmup 20 --json-out bench_results/phase41-c4.json
+
+test-bench: $(TARGET)
+	python3 tests/test_https_benchmark.py

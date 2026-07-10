@@ -951,3 +951,41 @@ Investigate the first sanitizer report rather than suppressing it. For an
 ordinary regression run use `make test` (normal build, no instrumentation).
 
 The optional debugging guide is a personal PDF outside the repository.
+
+
+## Phase 41 - HTTPS throughput and latency baseline (Fedora)
+
+Use `bench/https_bench.py` against a **running local** HTTPS gateway and Python backend.
+Every measured GET opens a fresh TCP/TLS 1.3 connection and verifies the server
+certificate and `localhost` hostname against the local CA. By default it asks
+for `/health` and requires HTTP 200 with the exact response body `ok\n`.
+The loopback benchmark makes no modifications to production C code.
+
+```bash
+make                 # in repo
+python3 tests/http_backend.py                       # terminal 1
+./build/tls-gateway --epoll-tls-proxy certs/server.crt certs/server.key 18444 18081  # terminal 2
+make bench           # terminal 3: 20 warmup, 200 measured GETs, 4 client workers
+make test-bench      # self-contained integration check (starts temporary services)
+```
+
+Reproducible concurrency series (repeat each 3 times, e.g. on idle Fedora):
+
+```bash
+python3 bench/https_bench.py --ca certs/ca.crt --concurrency 1 --requests 200 --warmup 20 --json-out bench_results/c1.json
+python3 bench/https_bench.py --ca certs/ca.crt --concurrency 4 --requests 200 --warmup 20 --json-out bench_results/c4.json
+python3 bench/https_bench.py --ca certs/ca.crt --concurrency 8 --requests 200 --warmup 20 --json-out bench_results/c8.json
+```
+
+The report includes successful requests/s (completed valid responses divided
+by measured wall-clock seconds), mean/p50/p95/p99 **successful** latency,
+errors, concurrency, machine information and run configuration. Each individual
+latency includes TCP connect, TLS handshake, request, full HTTP reply, and
+Python client overhead; throughput includes worker scheduling. Warmup samples
+are excluded. This measures a local client + gateway + Python backend stack,
+**not an isolated gateway limit**. New connections may use TLS resumption; do
+not interpret each request as necessarily a complete uncached handshake.
+
+`bench_results/` is Git-ignored. Never claim a numeric performance result on
+your resume without measuring and recording hardware, client load, and error
+rate. Learning PDF stays outside the repository.
