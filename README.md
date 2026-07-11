@@ -989,3 +989,33 @@ not interpret each request as necessarily a complete uncached handshake.
 `bench_results/` is Git-ignored. Never claim a numeric performance result on
 your resume without measuring and recording hardware, client load, and error
 rate. Learning PDF stays outside the repository.
+
+
+## Phase 42: concurrency and resource profiling
+
+Run the Python backend and C gateway as in Phase 41, then find the **actual**
+C gateway PID with `pgrep -af tls-gateway` (don't use the Python backend PID).
+Run `make bench-profile PID=<gateway-PID>` or:
+
+```bash
+python3 bench/concurrency_profile.py --pid <gateway-PID> --levels 1,4,8,16 \
+  --requests 100 --warmup 10 --ca certs/ca.crt \
+  --json-out bench_results/phase42-profile.json
+```
+
+The profiler reuses `bench/https_bench.py` (new verified TLS 1.3 connection
+per request) and samples `/proc/PID/stat`, `/proc/PID/status`, and
+`/proc/PID/fd`. It records successful RPS, p50/p95/p99, errors, process CPU
+percent (100% = one fully occupied logical CPU), peak resident memory (KiB),
+and peak open file descriptors. The Python backend's resources are **not**
+measured. CPU percent is an estimate for the gateway process, sampled during
+the **measured** workload only; short runs are noisy. CPU utilization can
+exceed 100% on a multithreaded process, although this gateway uses an epoll
+thread. Process samples may miss brief peaks. Benchmark results depend on
+the host; never treat example measurements as universal performance claims.
+
+This is a lightweight loopback educational benchmark, not a load-test
+certification or production performance guarantee. Keep JSON results in
+`bench_results/` (gitignored). `make test-profile` runs a self-contained test
+using temporary certificates/ports. The personal learning PDF is not part of
+the repository.

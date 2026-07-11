@@ -315,3 +315,13 @@ runs `bench/https_bench.py` (24 verified requests, concurrency 4). It checks
 that the JSON stats and latency percentiles are coherent and that incorrect
 response bodies or a missing CA fail closed. Normal `make test` discovers this
 test too. Raw benchmark results belong in ignored `bench_results/`, not Git.
+
+
+## Phase 42: resource profiler test
+
+`make test-profile` (or `python3 tests/test_concurrency_profile.py`) starts a
+local backend and C gateway with disposable certificates, verifies concurrency
+levels 1, 4 and 8, checks TLS throughput/latency results alongside `/proc`
+CPU, RSS and open-FD observations, and checks invalid PIDs/duplicate levels
+fail safely. The test uses only Python standard-library modules and keeps
+machine-specific numbers out of Git. It is also discovered by `make test`.
