@@ -44,3 +44,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 40 - GDB, ASan and UBSan isolated builds and instrumented HTTPS smoke tests (2027-01-09)
 - [x] Phase 41 - Reproducible verified HTTPS throughput and latency baseline (2027-01-10)
 - [x] Phase 42 - Profile HTTPS concurrency with Linux CPU, RSS and descriptor sampling (2027-01-11)
+- [x] Phase 43 - Consolidate README, architecture documentation, and resume evidence (2027-01-12)
