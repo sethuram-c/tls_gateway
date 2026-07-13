@@ -105,6 +105,32 @@ make bench-profile PID=<PID>     # 1, 4, 8, 16 concurrent clients and /proc
 
 Replace `<PID>` with the numeric PID. JSON measurements are saved under ignored `bench_results/`. Each benchmark request creates a **new verified TLS connection**; results include handshake overhead. Report hardware, OS/kernel, concurrency, sample count, errors, p50/p95/p99 latency, and CPU/RSS/FD context whenever citing performance. **No universal RPS claim is made here.**
 
+## Final release verification
+
+Before publishing a source-only GitHub release, run the offline source-hygiene
+check and the complete Python regression suite:
+
+```bash
+make clean
+make verify          # release-check + all Python tests; may take over a minute
+git diff --check
+git status --short   # confirm only intentional source/docs are staged
+```
+
+`make release-check` verifies required source/docs, Git ignore rules, and
+checks the Git index for accidentally tracked private keys, certificates,
+compiled files, or learning PDFs. It also exercises the built CLI. To audit
+a freshly extracted ZIP without `.git`, run
+`python3 scripts/release_check.py --source-export` **before** compiling.
+This is a **source-hygiene check, not a security audit**; `make test` and
+manual certificate verification remain essential. Never include `certs/`,
+`gateway.conf`, `build*/`, or benchmark results in a public release.
+
+The final release should be tagged **only after** the final phase commit
+passes locally and the remote GitHub repository is reviewed for secrets.
+For example, `git tag -a v0.1.0 -m "TLS gateway learning release"`, then
+`git push origin main --tags` if you want to publish that verified commit.
+
 ## Scope and limitations
 
 - Local educational gateway: IPv4 loopback listener and upstream only; no internet-facing hardening.

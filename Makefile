@@ -5,7 +5,7 @@ BUILD_DIR ?= build
 TARGET := $(BUILD_DIR)/tls-gateway
 OBJECTS := $(BUILD_DIR)/gateway_config.o $(BUILD_DIR)/main.o $(BUILD_DIR)/log.o $(BUILD_DIR)/socket_demo.o $(BUILD_DIR)/nonblock_demo.o $(BUILD_DIR)/socket_flags.o $(BUILD_DIR)/epoll_demo.o $(BUILD_DIR)/epoll_server.o $(BUILD_DIR)/epoll_tls.o $(BUILD_DIR)/epoll_tls_proxy.o $(BUILD_DIR)/sni_select.o $(BUILD_DIR)/mtls.o $(BUILD_DIR)/tls_credentials.o $(BUILD_DIR)/tls_state.o $(BUILD_DIR)/output_buffer.o $(BUILD_DIR)/connection.o $(BUILD_DIR)/tcp_server.o $(BUILD_DIR)/backend_connect.o $(BUILD_DIR)/backend_async.o $(BUILD_DIR)/tcp_proxy.o $(BUILD_DIR)/tls_context.o $(BUILD_DIR)/tls_listener.o $(BUILD_DIR)/tls_forward.o
 
-.PHONY: all debug asan ubsan test-sanitize test test-list test-runner test-smoke test-resources test-timeouts test-drain test-edge test-bench bench bench-profile test-profile clean certs certs-sni certs-client
+.PHONY: all debug asan ubsan test-sanitize test test-list test-runner test-smoke test-resources test-timeouts test-drain test-edge test-bench bench bench-profile test-profile clean certs certs-sni certs-client release-check verify
 all: $(TARGET)
 $(TARGET): $(OBJECTS)
 	$(CC) $(LDFLAGS) $(OBJECTS) -o $@ -lssl -lcrypto
@@ -144,3 +144,14 @@ bench-profile:
 
 test-profile: $(TARGET)
 	python3 tests/test_concurrency_profile.py
+
+# Phase 44: check source/release hygiene before performing a GitHub release.
+# Run the full regression suite separately; verify combines both gates.
+release-check: $(TARGET)
+	python3 scripts/release_check.py
+	python3 tests/test_release_check.py
+	./$(TARGET) --version
+
+verify: $(TARGET)
+	$(MAKE) release-check
+	$(MAKE) test

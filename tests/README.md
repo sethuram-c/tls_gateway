@@ -325,3 +325,14 @@ levels 1, 4 and 8, checks TLS throughput/latency results alongside `/proc`
 CPU, RSS and open-FD observations, and checks invalid PIDs/duplicate levels
 fail safely. The test uses only Python standard-library modules and keeps
 machine-specific numbers out of Git. It is also discovered by `make test`.
+
+## Phase 44: source release verification
+
+Run `make release-check` after compiling to confirm required files are present,
+ignored generated files remain excluded, and no private keys, certificates,
+compiled artifacts, or learning PDFs are staged/tracked by Git. The release
+checker does not open external network connections or modify the Git index.
+Run `make verify` for release hygiene plus the complete regression suite.
+For an unbuilt source-only ZIP extraction without `.git`, first run
+`python3 scripts/release_check.py --source-export` before compiling.
+This checks packaging hygiene, not deployment security.

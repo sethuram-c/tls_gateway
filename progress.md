@@ -45,3 +45,4 @@ Phase PDFs are personal learning resources, never committed to the repository.
 - [x] Phase 41 - Reproducible verified HTTPS throughput and latency baseline (2027-01-10)
 - [x] Phase 42 - Profile HTTPS concurrency with Linux CPU, RSS and descriptor sampling (2027-01-11)
 - [x] Phase 43 - Consolidate README, architecture documentation, and resume evidence (2027-01-12)
+- [x] Phase 44 - Verify release hygiene and complete source-only release checklist (2027-01-13)
