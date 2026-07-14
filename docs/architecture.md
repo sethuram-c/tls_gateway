@@ -1,89 +1,80 @@
-# Architecture and engineering trade-offs
+# How the gateway works
 
-This document describes the **current educational C gateway** (`src/epoll_tls_proxy.c`), not a proposal for a production proxy.
+The code path described here is `run_epoll_tls_proxy()` in `src/epoll_tls_proxy.c`. There are older TCP and TLS examples in `src/`; those are separate exercises, not alternate production implementations.
 
-## Data path
+## Request path
 
-```mermaid
-sequenceDiagram
-    participant Client as HTTPS client
-    participant Gateway as C gateway (epoll + OpenSSL)
-    participant Backend as Python HTTP backend
-    Client->>Gateway: TCP connect + TLS 1.3 ClientHello (SNI)
-    Gateway-->>Client: selected certificate / TLS handshake
-    Note over Gateway: Optional client certificate checked before upstream connect
-    Client->>Gateway: encrypted GET /health HTTP/1.1
-    Note over Gateway: SSL_read + strict GET/header validation
-    Gateway->>Backend: non-blocking TCP connect + plaintext GET
-    Backend-->>Gateway: plaintext HTTP/1.1 response bytes
-    Note over Gateway: bounded 8 KiB streaming buffer / backpressure
-    Gateway-->>Client: SSL_write encrypted response
-    Gateway-->>Client: close / cleanup
+```text
+HTTPS client          C gateway                       HTTP backend
+     |                    |                                 |
+     |--- TLS handshake ->|                                 |
+     |                    |  SSL_accept / SNI / optional mTLS|
+     |--- GET /health --->|                                 |
+     |                    |--- connect() + plaintext GET -->|
+     |                    |<---------- HTTP response -------|
+     |<-- TLS response ---|                                 |
+     |                    |                                 |
 ```
 
-- Client listener: `127.0.0.1:<listen_port>` (default example `18444`).
-- Backend socket: `127.0.0.1:<backend_port>` (default example `18081`).
-- One event loop monitors listener, clients, and backend sockets with `epoll`. It does not create one thread per client.
-- Clients validate server certificates using the development CA in local tests; this is **not** the same as client authentication via mTLS.
+The gateway listens on `127.0.0.1` and connects to a backend on the same host. OpenSSL handles encryption on the client side. The upstream connection is ordinary TCP, so TLS does **not** extend to the backend.
 
-## Components
+The event loop registers accepted client sockets and backend sockets with `epoll`. When an operation cannot make progress, it waits for the relevant readiness event rather than blocking the entire server.
 
-| Source | Responsibility |
-|---|---|
-| `src/main.c`, `src/gateway_config.c` | CLI and strict config-file parsing |
-| `src/epoll_tls_proxy.c` | Listener, per-session state, event dispatch, request validation, forwarding, shutdown |
-| `src/connection.c` | Fixed-size connection registry and generation-tagged tokens for stale events |
-| `src/backend_async.c` | Non-blocking backend TCP connection helpers and `SO_ERROR` |
-| `src/tls_context.c`, `src/tls_credentials.c` | TLS contexts, validation, credential generations and lifetime |
-| `src/sni_select.c`, `src/mtls.c` | Hostname-selected certificate and optional verified client certificate |
-| `src/socket_flags.c`, `src/output_buffer.c`, `src/tls_state.c` | Supporting socket and state-machine examples |
-| `tests/`, `bench/` | Reproducible tests, benchmarks and Linux resource sampling |
+## Session states
 
-Other C files implement historical, smaller learning stages; they are not separate production services.
-
-## Lifecycle and event ownership
-
-The main proxy has a bounded `ConnectionRegistry` (`CONNECTION_CAPACITY = 128`). Connection tokens contain a generation, preventing stale queued readiness from targeting a different client after a slot is reused. A client owns an `SSL *`, its accepted socket, its backend socket if opened, a retained credentials generation, and fixed request/response buffers.
-
-A simplified session progresses through these stages (actual interest masks and error paths depend on I/O status):
+The proxy's internal stages are:
 
 ```text
 P_HANDSHAKE -> P_REQUEST -> P_CONNECT -> P_SEND_UPSTREAM
-                                         -> P_READ_UPSTREAM -> P_SEND_CLIENT
-                                         -> close / release
+                                        -> P_READ_UPSTREAM -> P_SEND_CLIENT
+                                        -> close
 ```
 
-`SSL_accept`, `SSL_read`, and `SSL_write` may require a later `EPOLLIN` or `EPOLLOUT`; `SSL_ERROR_WANT_READ`/`WRITE` are readiness conditions, not reasons to spin or discard a connection. On each successful read/write, stage-specific monotonic timeouts are refreshed. The gateway avoids reading more while a bounded output buffer is in flight (backpressure).
+`SSL_accept()`, `SSL_read()`, and `SSL_write()` can return `SSL_ERROR_WANT_READ` or `SSL_ERROR_WANT_WRITE`. These results mean "try again when the socket is ready," not "the TLS connection failed." The operation and its pending bytes must be retained for the retry.
 
-Backend socket ownership is centralized in the proxy cleanup path. A closed TLS connection releases its `SSL` and socket, backend socket, and credentials reference; retired TLS generations are reclaimed when no active sessions reference them.
+Request headers are assembled in a fixed 8 KiB buffer and validated before any upstream connection is opened. A second 8 KiB buffer holds chunks of the backend response. When that buffer has pending data, the gateway stops reading from the backend until the TLS client catches up. A large response can therefore be streamed without holding it all in memory.
 
-## Trust boundary and protocol restrictions
+Only a narrow HTTP/1.1 subset is supported: a single `GET`, a `Host` header, no request body, and no pipelining. Ambiguous framing and unsupported request forms are rejected rather than forwarded.
 
-1. **TLS terminates at the gateway.** The gateway-to-backend hop is plaintext and restricted to loopback. Never describe the upstream as end-to-end encrypted.
-2. **SNI** selects `localhost` versus `api.test` server certificate during handshake. The HTTP `Host` header is a separate application-layer field; no general hostname-to-upstream routing is implemented.
-3. **Optional mTLS** requires a trusted client certificate before the proxy opens any backend connection; CA trust is a basic authentication policy, not per-user authorization.
-4. **HTTP framing** is intentionally narrow: one HTTP/1.1 GET with required Host header, no body, no pipelining, no Transfer-Encoding/Content-Length/Expect/Upgrade. Malformed or ambiguous requests return 400 without forwarding.
-5. **Limitations**: no production traffic, no HTTP/2, WebSockets, POST/PUT, upstream TLS, load balancing, wildcard/many-domain SNI, or general reverse-proxy rewriting.
+## Ownership and cleanup
 
-## Shutdown, reload, and timeouts
+The main structures are `ConnectionRegistry` (`src/connection.c`) and `ProxySession` (`src/epoll_tls_proxy.c`). The registry has 128 slots and associates each slot with a generation token, so a late `epoll` event can't refer to a new connection that reused the same slot.
 
-- `SIGHUP` sets a signal flag only. In the regular event loop, a complete new credential generation is loaded and validated; only on success is it activated for new clients. Existing connections keep old contexts until they finish. Invalid replacements leave the prior working generation active.
-- `SIGTERM`/`SIGINT` stop accepting, drain in-flight connections for up to **4 seconds**, then close what remains.
-- Monotonic inactivity/time budgets: TLS handshake **4s**, incomplete HTTP request **5s**, upstream connect **4s**, upstream read/write inactivity **5s**, TLS response-write inactivity **5s**. A partially sent HTTP response is closed, not replaced with a second status line.
-- Local 400 / 408 / 502 / 504 responses cover selected failure stages. These are not a complete HTTP server error taxonomy.
+For each client:
 
-## Performance interpretation
+- The registry owns the accepted client file descriptor.
+- The session owns its `SSL *`, optional backend descriptor, and fixed buffers.
+- A session holds a reference to the TLS credential generation used for its handshake.
 
-`bench/https_bench.py` tests verified TLS 1.3, typically with a **new TLS connection per request**, so RPS and latency include handshake work. `bench/concurrency_profile.py` repeats under 1/4/8/16 clients and samples the gateway PID using Linux `/proc` for CPU time, resident memory and open file descriptors. Results are specific to machine, kernel, OpenSSL build, workload, error rate and backend performance; benchmark JSON is not version-controlled.
+`close_client()` removes socket interests, closes the upstream if present, frees the `SSL` object, releases the credential reference, and then releases the client slot. In particular, freeing a reloaded certificate context before its last session finishes would leave the SNI callback with invalid data.
 
-## Design trade-offs
+## TLS configuration
 
-- **One loop vs threads:** easy to reason about and avoids per-client threads, but a single event loop can become a CPU bottleneck.
-- **Bounded buffers:** limits per-session queued memory and makes backpressure explicit; intentionally constrains the supported HTTP request size and features.
-- **Limited parser:** validates exactly the classroom subset instead of pretending to safely proxy arbitrary HTTP/1.1.
-- **Local-only:** lowers testing risk, but makes this inappropriate for deployment outside the developer workstation.
-- **Small configuration surface:** avoids unnecessary features; fixed defaults and hostname handling are not designed for many tenants.
+`src/tls_credentials.c` loads the active server contexts. `src/sni_select.c` chooses between `localhost` and `api.test`. With the second certificate configured, an unsupported DNS SNI name is rejected. No SNI uses the default certificate. The HTTP `Host` header doesn't choose a backend.
 
-## How to verify
+If mTLS is enabled, `src/mtls.c` configures certificate verification on both TLS contexts. A client must finish a verified handshake before the proxy connects upstream. Trusting a client CA authenticates membership in that trust set; there is no per-user authorization layer.
 
-From the repository root: `make`, `make test`, `make test-edge`, `make test-resources`, `make test-timeouts`, `make test-drain`, and `make test-sanitize`. For a verified HTTPS request, start `tests/http_backend.py`, start the gateway with `--config gateway.conf`, and run `curl --cacert certs/ca.crt https://localhost:18444/health`. Keep generated credentials and personal phase-learning PDFs out of Git.
+On `SIGHUP`, the signal handler sets a flag. The event loop loads and validates a complete replacement set of certificates, then swaps it into use for **new** connections. Existing sessions keep the old generation. If loading fails, the active generation is left alone. This reloads credentials, not the config file.
+
+## Timeouts and shutdown
+
+Deadlines use `CLOCK_MONOTONIC`. The configured-in-code limits are 4 seconds for the TLS handshake, 5 seconds for incomplete requests, 4 seconds for backend connect, and 5 seconds for backend I/O or TLS response-write inactivity. A stuck request can receive 408 or 504 where appropriate; once a response has started, the connection is closed instead of writing a second HTTP status.
+
+`SIGINT` and `SIGTERM` close the listening socket and keep processing accepted clients for up to 4 seconds. Remaining sessions are then closed. These short values make the failure tests practical; they are not production tuning advice.
+
+## Where to look
+
+| File | What to inspect |
+|---|---|
+| `src/epoll_tls_proxy.c` | Event dispatch, HTTP parsing, forwarding, timeouts, shutdown |
+| `src/backend_async.c` | Non-blocking `connect()` and `SO_ERROR` |
+| `src/connection.c` | Slot allocation and generation tokens |
+| `src/tls_credentials.c` | Reload and old-context lifetime |
+| `src/sni_select.c`, `src/mtls.c` | TLS hostname and client-certificate policy |
+| `src/gateway_config.c` | Config validation |
+| `tests/test_epoll_tls_proxy.py` | Basic end-to-end HTTPS behavior |
+| `tests/test_mtls_rejections.py` | Proving failed client authentication never reaches upstream |
+
+## Trade-offs
+
+A single event loop avoids a thread per client and makes socket state visible, but long CPU work would stall every connection. Fixed buffers cap per-session queue memory but also restrict supported requests. Loopback-only binding and the deliberately limited HTTP parser make this appropriate as a networking exercise, not as a drop-in replacement for nginx or HAProxy.

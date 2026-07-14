@@ -1,155 +1,112 @@
 # TLS Gateway
 
-A learning-focused, **event-driven TLS 1.3 reverse proxy in C** for Fedora/Linux. It uses OpenSSL for TLS and Linux `epoll` for non-blocking client and upstream I/O. Python is used only for the local test backend, integration tests, and benchmarking.
+A TLS 1.3 reverse proxy written in C for Linux. It accepts HTTPS connections, decrypts requests with OpenSSL, forwards them to a local HTTP backend, and sends the responses back over TLS. Client and backend sockets run through one `epoll` event loop.
 
-> **Educational project, not production-ready.** Listens on `127.0.0.1` and forwards to a loopback HTTP backend. See [limitations](#scope-and-limitations) before deploying anywhere.
+I kept the HTTP side deliberately small so I could focus on socket readiness, OpenSSL's non-blocking API, and connection cleanup. This is a loopback-only project, not a general-purpose or internet-facing proxy.
 
-## What it implements
+## Run it on Fedora
 
-- TLS 1.3 termination with OpenSSL and certificate/hostname verification at the client.
-- One `epoll`-based event loop for concurrent TLS clients and upstream sockets.
-- Certificate selection for `localhost` and `api.test` using SNI.
-- Optional mTLS: require trusted client certificates before opening an upstream connection.
-- `SIGHUP` credential reload, retaining old credentials for established sessions.
-- Bounded request/response buffers, backpressure, stage timeouts and graceful drain on SIGINT/SIGTERM.
-- Strict, narrow HTTP/1.1 **GET-only**, one-request-per-connection forwarding, including 400/408/502/504 errors.
-- Python integration tests, GDB / sanitizer builds, verified HTTPS benchmarks, and Linux `/proc` resource profiling.
+Install the build dependencies:
 
-## Architecture
-
-```mermaid
-flowchart LR
-    C[HTTPS client] -->|TLS 1.3| G[C gateway: OpenSSL + epoll]
-    G -->|Plain HTTP/1.1 over TCP| B[Python test backend]
-    B -->|HTTP response| G
-    G -->|Encrypted response| C
-```
-
-The gateway terminates TLS locally, then relays HTTP on loopback; **the upstream hop is not encrypted**. See [Architecture & design decisions](docs/architecture.md) for connection lifecycle, signal handling, security boundaries, and buffer ownership.
-
-## Build and run on Fedora
-
-Requires GCC, GNU Make, OpenSSL headers/libraries, Python 3, and curl.
-
-```bash
+```sh
 sudo dnf install gcc make openssl openssl-devel python3 curl
 make
-make certs                 # create a disposable local CA + server cert; first time only
+make certs
 cp config/gateway.conf.example gateway.conf
 ./build/tls-gateway --check-config gateway.conf
 ```
 
-Start three terminals from the repository root:
+`make certs` generates a local CA and a certificate for `localhost`. It refuses to overwrite an existing set of keys.
 
-```bash
-# Terminal 1: plaintext local backend
+Start the backend and gateway in separate terminals:
+
+```sh
 python3 tests/http_backend.py
 ```
 
-```bash
-# Terminal 2: HTTPS gateway
+```sh
 ./build/tls-gateway --config gateway.conf
 ```
 
-```bash
-# Terminal 3: verify TLS and HTTP, not -k / --insecure
-curl --noproxy '*' -i --cacert certs/ca.crt \
+Make a verified request from a third terminal:
+
+```sh
+curl --noproxy '*' --cacert certs/ca.crt \
   https://localhost:18444/health
 ```
 
-Expected: HTTP `200`, body `ok`. Default ports: HTTPS `18444`, HTTP backend `18081`. Everything binds to loopback. Local `gateway.conf`, `certs/`, and `bench_results/` are ignored by Git. **Never commit the generated CA/private keys.**
+You should get `ok`. The example config listens on `127.0.0.1:18444` and forwards to `127.0.0.1:18081` without encrypting the backend connection.
 
-### Optional SNI and mTLS
+## Features
 
-```bash
-make certs-sni                 # second server certificate: api.test
-make certs-client              # test client identity
+- TLS 1.3 termination using OpenSSL; non-blocking client and backend I/O with `epoll`.
+- Certificate selection for `localhost` and `api.test` using SNI.
+- Optional client-certificate authentication (mTLS), enforced before opening a backend connection.
+- Certificate reload on `SIGHUP`. New connections use the replacement certificates; established connections retain the old TLS context until they finish.
+- Fixed-size request/response buffers, backpressure, connection timeouts, and a short shutdown drain period.
+- Explicit handling of malformed requests and selected upstream failures (400, 408, 502, 504).
+
+The main proxy implementation is in [`src/epoll_tls_proxy.c`](src/epoll_tls_proxy.c). Earlier command-line socket and TLS demos are still available in the executable, but `--config` is the normal entry point.
+
+### Second certificate and client authentication
+
+```sh
+make certs-sni
+make certs-client
 ```
 
-Edit `gateway.conf`: set `api_cert` / `api_key` to `certs/api.test.crt` / `certs/api.test.key`; to enable mTLS, set `require_mtls = true` and `client_ca = certs/ca.crt`. Then restart the gateway with `--config`.
+To enable both, set the following in your local `gateway.conf`:
 
-```bash
+```ini
+api_cert = certs/api.test.crt
+api_key = certs/api.test.key
+require_mtls = true
+client_ca = certs/ca.crt
+```
+
+Restart the gateway after changing the config. Then test `api.test` with its client certificate:
+
+```sh
 curl --noproxy '*' --cacert certs/ca.crt \
   --cert certs/client.crt --key certs/client.key \
   --resolve api.test:18444:127.0.0.1 \
   https://api.test:18444/health
 ```
 
-A client without the required certificate is rejected. **Do not install the development CA in your OS-wide trust store.** Send `kill -HUP <PID>` to reload validated on-disk credentials for new clients; established connections continue with their previous TLS context.
+Without mTLS enabled, omit `--cert` and `--key`. To reload certificate files at the configured paths, send `SIGHUP` to the running gateway. Changing `gateway.conf` itself requires a restart.
 
-## Test and debug
+Keep the generated CA and private keys local. `certs/` and `gateway.conf` are ignored by Git; do not include them when sharing a source archive.
 
-```bash
-make test                # isolated Python integration scripts
-make test-list           # list test scripts
-make test-edge           # malformed HTTP / early disconnects / slow backend
-make test-resources      # fd / cleanup stress checks
-make test-timeouts       # stalled client and backend scenarios
-make test-drain          # shutdown / draining
-make asan                # AddressSanitizer build in build-asan/
-make ubsan               # UndefinedBehaviorSanitizer build in build-ubsan/
-make test-sanitize       # instrumented HTTPS smoke checks
+## Tests and profiling
+
+```sh
+make test               # all Python integration tests
+make test-edge          # malformed HTTP and early disconnects
+make test-timeouts      # idle clients and backends
+make test-resources     # fd cleanup under failed and concurrent sessions
+make test-drain         # graceful shutdown
+make asan               # AddressSanitizer build
+make ubsan              # UndefinedBehaviorSanitizer build
+make test-sanitize      # HTTPS smoke tests against both builds
+make verify             # source hygiene + full test suite
 ```
 
-`make test` discovers scripts through `tests/run_tests.py`; some tests intentionally use temporary certificates and ephemeral ports. The helper `tests/http_backend.py` is not the gateway implementation.
+Tests use temporary certificates and local ports; they don't require a globally trusted development CA. See [tests/README.md](tests/README.md) for running individual tests and diagnosing failures.
 
-## Benchmarks (local measurements only)
+For local benchmarks, start the backend and non-mTLS gateway first, then run:
 
-With the backend and non-mTLS gateway running on default ports:
-
-```bash
-make bench                       # verified TLS 1.3 throughput + latency
-pgrep -af tls-gateway            # identify the correct gateway PID
-make bench-profile PID=<PID>     # 1, 4, 8, 16 concurrent clients and /proc
+```sh
+make bench
+pgrep -af tls-gateway
+make bench-profile PID=12345    # replace with the gateway PID
 ```
 
-Replace `<PID>` with the numeric PID. JSON measurements are saved under ignored `bench_results/`. Each benchmark request creates a **new verified TLS connection**; results include handshake overhead. Report hardware, OS/kernel, concurrency, sample count, errors, p50/p95/p99 latency, and CPU/RSS/FD context whenever citing performance. **No universal RPS claim is made here.**
+Both scripts create a new verified TLS connection per request, so their latency includes handshake cost. Results go into the ignored `bench_results/` directory. I haven't included machine-dependent RPS numbers in this README.
 
-## Final release verification
+## Limits
 
-Before publishing a source-only GitHub release, run the offline source-hygiene
-check and the complete Python regression suite:
+This proxy handles one bodyless HTTP/1.1 `GET` per TLS connection. It does not implement keep-alive, request bodies, HTTP/2, WebSockets, upstream TLS, load balancing, or arbitrary host routing. The connection registry has 128 slots; request and response buffers are 8 KiB each. Both hops bind to IPv4 loopback.
 
-```bash
-make clean
-make verify          # release-check + all Python tests; may take over a minute
-git diff --check
-git status --short   # confirm only intentional source/docs are staged
-```
+The HTTP parser only accepts a restricted subset of requests. Passing the tests (including sanitizer runs) doesn't make it safe to expose publicly.
 
-`make release-check` verifies required source/docs, Git ignore rules, and
-checks the Git index for accidentally tracked private keys, certificates,
-compiled files, or learning PDFs. It also exercises the built CLI. To audit
-a freshly extracted ZIP without `.git`, run
-`python3 scripts/release_check.py --source-export` **before** compiling.
-This is a **source-hygiene check, not a security audit**; `make test` and
-manual certificate verification remain essential. Never include `certs/`,
-`gateway.conf`, `build*/`, or benchmark results in a public release.
-
-The final release should be tagged **only after** the final phase commit
-passes locally and the remote GitHub repository is reviewed for secrets.
-For example, `git tag -a v0.1.0 -m "TLS gateway learning release"`, then
-`git push origin main --tags` if you want to publish that verified commit.
-
-## Scope and limitations
-
-- Local educational gateway: IPv4 loopback listener and upstream only; no internet-facing hardening.
-- Accepts one bodyless `GET` per TLS connection; no POST, HTTP keep-alive, HTTP/2, request bodies, or pipelining.
-- Uses a fixed connection registry (128 slots), an 8 KiB request buffer, and an 8 KiB streaming response buffer.
-- Supports exactly two configured SNI names (`localhost`, `api.test`), not dynamic virtual-host routing. With alternate SNI enabled, unsupported names fail closed.
-- No upstream TLS, load balancing, HTTP header rewriting, authentication policy beyond certificate trust, or extensive configuration system.
-- A passing test suite or sanitizer run is not a formal security audit; use a mature proxy for real deployments.
-
-## Repository map
-
-| Path | Responsibility |
-|---|---|
-| `src/`, `include/` | C sockets, OpenSSL, `epoll`, TLS state and proxy forwarding |
-| `config/gateway.conf.example` | Minimal local configuration template |
-| `scripts/` | Disposable developer certificate generation |
-| `tests/` | Python test backend, integration tests and runner |
-| `bench/` | Verified HTTPS load and `/proc` profiling scripts |
-| `docs/architecture.md` | Design, flows, ownership, and engineering trade-offs |
-| `progress.md` | Historical phase-by-phase implementation record |
-
-Previous phase labs (`--tcp-proxy`, `--tls-listen`, `--epoll-tls`, etc.) remain in the binary as learning exercises. The primary path is `--config` -> `run_epoll_tls_proxy()`. Learning PDFs are deliberately **not part of this repository**.
+For the event flow, TLS context ownership, and design choices, see [docs/architecture.md](docs/architecture.md). The smaller networking exercises are summarized in [progress.md](progress.md).

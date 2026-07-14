@@ -1,48 +1,14 @@
-# TLS Gateway progress
+# Development notes
 
-- [x] Phase 1 - Fedora development setup (2026-12-01)
-- [x] Phase 2 - Project structure, Make and diagnostics (2026-12-02)
-- [x] Phase 3 - IPv4 socket lifecycle demo (2026-12-03)
-- [x] Phase 4 - Persistent blocking TCP server (2026-12-04)
-- [x] Phase 5 - Python HTTP test backend (2026-12-05)
-- [x] Phase 6 - Outbound TCP connection to HTTP backend (2026-12-06)
-- [x] Phase 7 - Bidirectional TCP forwarding (2026-12-07)
-- [x] Phase 8 - TLS 1.3 handshake concepts and verification lab (2026-12-08)
-- [x] Phase 9 - Generate local CA and server certificates (2026-12-09)
-- [x] Phase 10 - OpenSSL SSL_CTX, SSL and BIO diagnostic (2026-12-10)
-- [x] Phase 11 - Initialize TLS listener (2026-12-11)
-- [x] Phase 12 - Implement TLS handshake with SSL_accept (2026-12-12)
-- [x] Phase 13 - Read decrypted application data with SSL_read (2026-12-13)
-- [x] Phase 14 - Send encrypted HTTP responses with SSL_write (2026-12-14)
-- [x] Phase 15 - Integrate TLS termination with backend forwarding (2026-12-15)
-- [x] Phase 16 - Non-blocking I/O fundamentals (2026-12-16)
-- [x] Phase 17 - Reusable socket flag helpers for future epoll path (2026-12-17)
-- [x] Phase 18 - Linux epoll readiness lab (2026-12-18)
-- [x] Phase 19 - Build epoll-driven TCP listener (2026-12-19)
+The gateway started as a blocking TCP proxy, then gained TLS termination and moved to a non-blocking `epoll` loop. The early command-line demos are still compiled for reference; the config-driven proxy is the implementation to look at now.
 
-Phase PDFs are personal learning resources, never committed to the repository.
-- [x] Phase 20 - Track per-client state and safe epoll connection lifecycle (2026-12-20)
-- [x] Phase 21 - Implement non-blocking TLS 1.3 handshakes using epoll (2026-12-21)
-- [x] Phase 22 - Keep TLS sessions open and read decrypted data via epoll (2026-12-22)
-- [x] Phase 23 - Bounded SSL_write output queue and TLS echo backpressure (2026-12-23)
-- [x] Phase 24 - Explicit TLS connection states and transition validation (2026-12-24)
-- [x] Phase 25 - Non-blocking backend connect with epoll and SO_ERROR (2026-12-25)
-- [x] Phase 26 - Event-driven TLS termination and non-blocking HTTP forwarding (2026-12-26)
-- [x] Phase 27 - SNI fundamentals, alternate dev certificate and hostname observation (2026-12-27)
-- [x] Phase 28 - SNI callback selects localhost or api.test certificate (2026-12-28)
-- [x] Phase 29 - Verify multi-hostname TLS trust, SNI and certificate isolation (2026-12-29)
-- [x] Phase 30 - Generate clientAuth identity and verify mutual TLS requirements (2026-12-30)
-- [x] Phase 31 - Require verified client certificates in C epoll TLS proxy (2026-12-31)
-- [x] Phase 32 - Reject invalid mTLS peers before opening any backend connection (2027-01-01)
-- [x] Phase 33 - Reload validated TLS contexts on SIGHUP without dropping active sessions (2027-01-02)
-- [x] Phase 34 - Parse a minimal config file and launch validated HTTPS proxy modes (2027-01-03)
-- [x] Phase 35 - Consolidate backend socket cleanup and test descriptor lifetimes (2027-01-04)
-- [x] Phase 36 - Enforce monotonic per-stage TLS/client/backend inactivity limits (2027-01-05)
-- [x] Phase 37 - Stop acceptance and drain active TLS sessions on SIGTERM/SIGINT (2027-01-06)
-- [x] Phase 38 - Consolidate Python regression runner and isolate test subprocesses (2027-01-07)
-- [x] Phase 39 - Reject ambiguous HTTP framing and inject connection failures (2027-01-08)
-- [x] Phase 40 - GDB, ASan and UBSan isolated builds and instrumented HTTPS smoke tests (2027-01-09)
-- [x] Phase 41 - Reproducible verified HTTPS throughput and latency baseline (2027-01-10)
-- [x] Phase 42 - Profile HTTPS concurrency with Linux CPU, RSS and descriptor sampling (2027-01-11)
-- [x] Phase 43 - Consolidate README, architecture documentation, and resume evidence (2027-01-12)
-- [x] Phase 44 - Verify release hygiene and complete source-only release checklist (2027-01-13)
+The main steps were:
+
+- Built basic TCP listeners and a local Python backend to check forwarding.
+- Added OpenSSL context setup, certificate validation, TLS handshakes, and HTTPS responses.
+- Reworked client handling around `epoll`, per-connection state, bounded buffers, and non-blocking upstream sockets.
+- Added SNI certificate selection, optional mTLS, and certificate reload without dropping established sessions.
+- Tested malformed requests, timeouts, disconnects, cleanup, and graceful shutdown.
+- Added Python integration tests, sanitizer builds, HTTPS benchmarks, and Linux resource profiling.
+
+The Git history has the individual implementation steps. Current usage and known limitations are documented in `README.md`; `docs/architecture.md` covers the event loop and ownership rules.
